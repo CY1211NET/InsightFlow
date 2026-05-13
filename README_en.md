@@ -31,6 +31,16 @@ Click the grid icon on the far left of the overlay to open the powerful local da
 - **Flat Activity Records**: Intuitively displays your application switching history throughout the day in reverse chronological order.
 - **Module Manager**: Customize categories by adding new ones (like "Learning" or "Design"), changing their representative colors, and manually managing the process keywords and website domain suffixes that match them.
 
+### 5. Web Tracking Browser Extension
+To accurately record and categorize your time spent in the web browser (distinguishing whether you are reading documentation or scrolling through Twitter), we provide a Chrome browser extension:
+- **Seamless Tracking**: Automatically extracts the domain and page title of your currently active tab and reports it to the InsightFlow backend daemon via a local HTTP channel (`127.0.0.1:5678`).
+- **Installation Guide**:
+  1. Open Chrome, Edge, or any Chromium-based browser.
+  2. Type `chrome://extensions/` in the address bar and press Enter.
+  3. Turn on **Developer mode** in the top right corner of the page.
+  4. Click **Load unpacked**.
+  5. Select the `bridge/` folder from this repository to complete the installation!
+
 ---
 
 ## ⌨️ Shortcuts & Tips
