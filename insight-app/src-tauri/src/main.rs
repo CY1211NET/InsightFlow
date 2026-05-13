@@ -1,0 +1,608 @@
+mod autostart;
+mod classifier;
+mod db;
+mod http_server;
+mod models;
+mod monitor;
+
+use log::info;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::{Emitter, Manager, State};
+use windows::Win32::Foundation::{COLORREF, HWND};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, HOT_KEY_MODIFIERS, MOD_CONTROL, MOD_SHIFT,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowLongW, SetLayeredWindowAttributes, SetWindowLongW, GWL_EXSTYLE, LWA_ALPHA, WM_HOTKEY,
+    WS_EX_LAYERED,
+};
+
+use models::{
+    CategoryAppBreakdown, DailyFocus, DashboardData, ModuleConfig, ModuleGoals, ModuleProgress,
+    OverlayData, WebVisit,
+};
+
+#[derive(Debug, Serialize)]
+struct DistractionStateRes {
+    #[serde(rename = "streakSecs")]
+    streak_secs: i64,
+    #[serde(rename = "isDistracted")]
+    is_distracted: bool,
+}
+
+#[tauri::command]
+fn get_distraction_state() -> Result<DistractionStateRes, String> {
+    let state = monitor::get_distraction_state().unwrap_or((0, false));
+    Ok(DistractionStateRes {
+        streak_secs: state.0,
+        is_distracted: state.1,
+    })
+}
+
+#[tauri::command]
+fn correct_activity_category(
+    app_name: String,
+    new_category: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 1. Update classifier config
+    {
+        let mut classifier = state.classifier.lock().unwrap();
+        classifier.add_app_keyword_to_module(&app_name, &new_category);
+        classifier.save(&state.config_path);
+    }
+    
+    // 2. Update DB
+    {
+        let db = state.db_conn.lock().unwrap();
+        db.execute(
+            "UPDATE activities SET category = ?1 WHERE app_name = ?2",
+            rusqlite::params![new_category, app_name],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WindowState {
+    x: i32,
+    y: i32,
+    opacity: f64,
+    daily_goal_secs: i64,
+    #[serde(default)]
+    module_goals: ModuleGoals,
+}
+
+impl Default for WindowState {
+    fn default() -> Self {
+        Self {
+            x: 40,
+            y: 80,
+            opacity: 1.0,
+            daily_goal_secs: 14400,
+            module_goals: ModuleGoals::default(),
+        }
+    }
+}
+
+struct AppState {
+    db_conn: Arc<Mutex<rusqlite::Connection>>,
+    data_dir: PathBuf,
+    config_path: PathBuf,
+    window_state: Arc<Mutex<WindowState>>,
+    classifier: Arc<Mutex<classifier::ClassifierConfig>>,
+}
+
+#[tauri::command]
+fn get_overlay_data(state: State<'_, AppState>) -> Result<OverlayData, String> {
+    let db = state.db_conn.lock().unwrap();
+    let focus_secs = db::query_today_focus_secs(&db).unwrap_or(0);
+    let ws = state.window_state.lock().unwrap();
+    let goal_pct = ((focus_secs as f32 / ws.daily_goal_secs as f32) * 100.0).min(100.0) as u32;
+
+    Ok(OverlayData {
+        current_app: "InsightFlow".to_string(),
+        category: "dev".to_string(),
+        session_secs: 0,
+        focus_secs,
+        goal_pct,
+        category_secs: 0,
+        ai_hint: String::new(),
+    })
+}
+
+#[tauri::command]
+fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData, String> {
+    let db = state.db_conn.lock().unwrap();
+    let activities = db::query_today_activities(&db).unwrap_or_default();
+    let category_stats = db::query_today_category_stats(&db).unwrap_or_default();
+    let total_secs: i64 = category_stats.iter().map(|s| s.total_secs).sum();
+
+    Ok(DashboardData {
+        activities,
+        category_stats,
+        total_secs,
+    })
+}
+
+#[tauri::command]
+fn get_web_history(state: State<'_, AppState>) -> Result<Vec<WebVisit>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::query_today_web_history(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_dashboard_data_range(
+    state: State<'_, AppState>,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<DashboardData, String> {
+    let db = state.db_conn.lock().unwrap();
+    let activities = db::query_activities_range(&db, start_ts, end_ts).unwrap_or_default();
+    let category_stats = db::query_category_stats_range(&db, start_ts, end_ts).unwrap_or_default();
+    let total_secs: i64 = category_stats.iter().map(|s| s.total_secs).sum();
+    Ok(DashboardData {
+        activities,
+        category_stats,
+        total_secs,
+    })
+}
+
+#[tauri::command]
+fn get_category_app_breakdown(
+    state: State<'_, AppState>,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<Vec<CategoryAppBreakdown>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::query_category_app_breakdown(&db, start_ts, end_ts).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_weekly_focus_series(state: State<'_, AppState>) -> Result<Vec<DailyFocus>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::query_daily_focus_series(&db, 7).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn show_dashboard(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("dashboard") {
+        win.show().map_err(|e| e.to_string())?;
+        win.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn load_window_state(data_dir: &PathBuf) -> WindowState {
+    let path = data_dir.join("window.json");
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(state) = serde_json::from_str::<WindowState>(&content) {
+                return state;
+            }
+        }
+    }
+    WindowState::default()
+}
+
+fn save_window_state(data_dir: &PathBuf, state: &WindowState) {
+    let path = data_dir.join("window.json");
+    if let Ok(content) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(path, content);
+    }
+}
+
+#[tauri::command]
+fn save_window_position(state: State<'_, AppState>, x: i32, y: i32) -> Result<(), String> {
+    let mut ws = state.window_state.lock().unwrap();
+    ws.x = x;
+    ws.y = y;
+    save_window_state(&state.data_dir, &ws);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_opacity(state: State<'_, AppState>) -> Result<f64, String> {
+    let ws = state.window_state.lock().unwrap();
+    Ok(ws.opacity)
+}
+
+#[tauri::command]
+fn set_opacity(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    opacity: f64,
+) -> Result<(), String> {
+    let opacity = opacity.clamp(0.1, 1.0);
+    {
+        let mut ws = state.window_state.lock().unwrap();
+        ws.opacity = opacity;
+        save_window_state(&state.data_dir, &ws);
+    }
+    if let Some(win) = app.get_webview_window("overlay") {
+        if let Ok(hwnd) = win.hwnd() {
+            set_window_opacity(HWND(hwnd.0 as _), opacity);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_daily_goal(state: State<'_, AppState>) -> Result<i64, String> {
+    let ws = state.window_state.lock().unwrap();
+    Ok(ws.daily_goal_secs)
+}
+
+#[tauri::command]
+fn set_daily_goal(state: State<'_, AppState>, goal_secs: i64) -> Result<(), String> {
+    let mut ws = state.window_state.lock().unwrap();
+    ws.daily_goal_secs = goal_secs.max(600);
+    save_window_state(&state.data_dir, &ws);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_module_goals(state: State<'_, AppState>) -> Result<ModuleGoals, String> {
+    let ws = state.window_state.lock().unwrap();
+    Ok(ws.module_goals.clone())
+}
+
+#[tauri::command]
+fn set_module_goal(
+    state: State<'_, AppState>,
+    category: String,
+    goal_secs: i64,
+) -> Result<(), String> {
+    let mut ws = state.window_state.lock().unwrap();
+    ws.module_goals.set(&category, goal_secs.max(0));
+    save_window_state(&state.data_dir, &ws);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_module_progress(state: State<'_, AppState>) -> Result<Vec<ModuleProgress>, String> {
+    let db = state.db_conn.lock().unwrap();
+    let ws = state.window_state.lock().unwrap();
+    let modules = state.classifier.lock().unwrap().modules.clone();
+    let module_ids: Vec<String> = modules.into_iter().map(|m| m.id).collect();
+    db::query_module_progress(&db, &module_ids, &ws.module_goals).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_modules(state: State<'_, AppState>) -> Result<Vec<ModuleConfig>, String> {
+    let classifier = state.classifier.lock().unwrap();
+    Ok(classifier.modules.clone())
+}
+
+#[tauri::command]
+fn save_modules(state: State<'_, AppState>, modules: Vec<ModuleConfig>) -> Result<(), String> {
+    let normalized = normalize_modules(modules);
+    let mut classifier = state.classifier.lock().unwrap();
+    classifier.modules = normalized;
+    classifier.save(&state.config_path);
+    Ok(())
+}
+
+#[tauri::command]
+fn resize_overlay(app: tauri::AppHandle, height: u32) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("overlay") {
+        win.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: 300.0,
+            height: height as f64,
+        }))
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_autostart() -> Result<bool, String> {
+    Ok(autostart::is_autostart_enabled())
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<(), String> {
+    if enabled {
+        autostart::enable_autostart()
+    } else {
+        autostart::disable_autostart()
+    }
+}
+
+#[tauri::command]
+fn get_locale(state: State<'_, AppState>) -> Result<String, String> {
+    let locale_path = state.data_dir.join("locale.txt");
+    if locale_path.exists() {
+        std::fs::read_to_string(&locale_path)
+            .map(|s| s.trim().to_string())
+            .map_err(|e| e.to_string())
+    } else {
+        Ok("zh-CN".to_string())
+    }
+}
+
+#[tauri::command]
+fn set_locale(state: State<'_, AppState>, locale: String) -> Result<(), String> {
+    if locale != "zh-CN" && locale != "en" {
+        return Err(format!("Unsupported locale: {locale}"));
+    }
+    let locale_path = state.data_dir.join("locale.txt");
+    std::fs::write(&locale_path, &locale).map_err(|e| e.to_string())?;
+    info!("Locale set to: {locale}");
+    Ok(())
+}
+
+#[tauri::command]
+fn get_theme(state: State<'_, AppState>) -> Result<String, String> {
+    let theme_path = state.data_dir.join("theme.txt");
+    if theme_path.exists() {
+        std::fs::read_to_string(&theme_path)
+            .map(|s| s.trim().to_string())
+            .map_err(|e| e.to_string())
+    } else {
+        Ok("day".to_string())
+    }
+}
+
+#[tauri::command]
+fn set_theme(state: State<'_, AppState>, theme: String) -> Result<(), String> {
+    if theme != "day" && theme != "night" {
+        return Err(format!("Unsupported theme: {theme}"));
+    }
+    let theme_path = state.data_dir.join("theme.txt");
+    std::fs::write(&theme_path, &theme).map_err(|e| e.to_string())?;
+    info!("Theme set to: {theme}");
+    Ok(())
+}
+
+#[allow(dead_code)]
+struct TrayState(tauri::tray::TrayIcon<tauri::Wry>);
+
+fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let icon = app.default_window_icon().expect("No window icon").clone();
+    let show = MenuItem::with_id(app, "tray_show", "显示悬浮窗", true, None::<&str>)?;
+    let hide = MenuItem::with_id(app, "tray_hide", "隐藏悬浮窗", true, None::<&str>)?;
+    let open_dash = MenuItem::with_id(app, "tray_dashboard", "历史面板", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "tray_quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &hide, &open_dash, &quit_item])?;
+
+    let tray = TrayIconBuilder::new()
+        .icon(icon)
+        .tooltip("InsightFlow")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "tray_show" => {
+                if let Some(win) = app.get_webview_window("overlay") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+            "tray_hide" => {
+                if let Some(win) = app.get_webview_window("overlay") {
+                    let _ = win.hide();
+                }
+            }
+            "tray_dashboard" => {
+                if let Some(win) = app.get_webview_window("dashboard") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+            "tray_quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+
+    app.manage(TrayState(tray));
+    Ok(())
+}
+
+fn get_data_dir() -> PathBuf {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(appdata).join("InsightFlow")
+}
+
+fn normalize_modules(mut modules: Vec<ModuleConfig>) -> Vec<ModuleConfig> {
+    use std::collections::HashSet;
+
+    let mut used: HashSet<String> = HashSet::new();
+    for module in &mut modules {
+        let raw_id = module.id.trim().to_string();
+        let base = if raw_id.is_empty() {
+            module.name.trim().to_lowercase().replace(' ', "_")
+        } else {
+            raw_id.to_lowercase().replace(' ', "_")
+        };
+        let mut id = if base.is_empty() {
+            "module".to_string()
+        } else {
+            base
+        };
+        if used.contains(&id) {
+            let mut i = 2;
+            let base_id = id.clone();
+            while used.contains(&format!("{base_id}_{i}")) {
+                i += 1;
+            }
+            id = format!("{base_id}_{i}");
+        }
+        used.insert(id.clone());
+        module.id = id;
+        module.name = module.name.trim().to_string();
+        module.color = module.color.trim().to_string();
+        module.app_keywords = module
+            .app_keywords
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        module.site_domains = module
+            .site_domains
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    modules
+}
+
+/// Set window opacity via Win32 layered window API (0.0 = transparent, 1.0 = opaque)
+fn set_window_opacity(hwnd: HWND, opacity: f64) {
+    let alpha = (opacity.clamp(0.0, 1.0) * 255.0) as u8;
+    unsafe {
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+    }
+}
+
+fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let data_dir = get_data_dir();
+    std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
+    let db_path = data_dir.join("data.db");
+    let config_path = data_dir.join("config.toml");
+
+    let conn = db::init_db(&db_path).expect("Failed to init database");
+    let db_conn = Arc::new(Mutex::new(conn));
+    let classifier = Arc::new(Mutex::new(classifier::ClassifierConfig::load(&config_path)));
+    let window_state = Arc::new(Mutex::new(load_window_state(&data_dir)));
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_positioner::init())
+        .manage(AppState {
+            db_conn: db_conn.clone(),
+            data_dir: data_dir.clone(),
+            config_path: config_path.clone(),
+            window_state: window_state.clone(),
+            classifier: classifier.clone(),
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_overlay_data,
+            get_dashboard_data,
+            get_dashboard_data_range,
+            get_category_app_breakdown,
+            get_weekly_focus_series,
+            get_web_history,
+            show_dashboard,
+            get_locale,
+            set_locale,
+            get_theme,
+            set_theme,
+            save_window_position,
+            get_opacity,
+            set_opacity,
+            get_daily_goal,
+            set_daily_goal,
+            get_module_goals,
+            set_module_goal,
+            get_module_progress,
+            get_modules,
+            save_modules,
+            get_autostart,
+            set_autostart,
+            resize_overlay,
+            get_distraction_state,
+            correct_activity_category
+        ])
+        .setup(move |app| {
+            setup_tray(app)?;
+
+            // ── Dashboard：关闭时隐藏而非销毁，保证 show_dashboard 始终可用 ──
+            if let Some(dash) = app.get_webview_window("dashboard") {
+                let dash_hide = dash.clone();
+                dash.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = dash_hide.hide();
+                    }
+                });
+            }
+
+            let overlay_window = app.get_webview_window("overlay").unwrap();
+
+            // 恢复窗口位置和透明度
+            let ws = window_state.lock().unwrap();
+            let _ =
+                overlay_window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                    x: ws.x,
+                    y: ws.y,
+                }));
+            if let Ok(hwnd) = overlay_window.hwnd() {
+                set_window_opacity(HWND(hwnd.0 as _), ws.opacity);
+            }
+            drop(ws);
+
+            // 监听窗口移动事件，保存位置
+            let data_dir_clone = data_dir.clone();
+            let ws_clone = window_state.clone();
+            overlay_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    let mut ws = ws_clone.lock().unwrap();
+                    ws.x = pos.x;
+                    ws.y = pos.y;
+                    save_window_state(&data_dir_clone, &ws);
+                }
+            });
+
+            // 启动后台监控
+            let app_handle = app.handle().clone();
+            let db_conn_clone = db_conn.clone();
+            let classifier_clone = classifier.clone();
+            let goal_secs = window_state.lock().unwrap().daily_goal_secs;
+
+            // 启动 HTTP 服务器（浏览器插件桥接）
+            let db_conn_http = db_conn.clone();
+            let classifier_http = classifier.clone();
+            std::thread::spawn(move || {
+                http_server::start_http_server(db_conn_http, classifier_http, 5678);
+            });
+
+            let app_handle_clone = app.handle().clone();
+            std::thread::spawn(move || {
+                monitor::start_monitoring(
+                    db_conn_clone,
+                    classifier_clone,
+                    app_handle_clone.clone(),
+                    goal_secs,
+                );
+
+                // 注册全局快捷键 Ctrl+Shift+I 切换点击穿透
+                const HOTKEY_TOGGLE_THROUGH: i32 = 1;
+                unsafe {
+                    let _ =
+                        RegisterHotKey(None, HOTKEY_TOGGLE_THROUGH, MOD_CONTROL | MOD_SHIFT, 0x49);
+                    // 0x49 = 'I'
+                }
+                info!("Hotkey Ctrl+Shift+I registered for click-through toggle");
+
+                // Windows 消息循环
+                unsafe {
+                    let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
+                    while windows::Win32::UI::WindowsAndMessaging::GetMessageW(&mut msg, None, 0, 0)
+                        .as_bool()
+                    {
+                        if msg.message == WM_HOTKEY
+                            && msg.wParam.0 == HOTKEY_TOGGLE_THROUGH as usize
+                        {
+                            let _ = app_handle_clone.emit("toggle-click-through", ());
+                        }
+                        let _ = windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                        windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                    }
+                }
+            });
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

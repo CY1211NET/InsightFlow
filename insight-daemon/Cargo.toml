@@ -1,0 +1,46 @@
+[package]
+name = "insight-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "InsightFlow core daemon - low-overhead activity monitor"
+
+[dependencies]
+# Windows API bindings
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Accessibility",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_LibraryLoader",
+] }
+
+# SQLite ORM
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Thread-safe shared state
+parking_lot = "0.12"
+
+# Config file parsing
+toml = "0.8"
+
+# Async runtime (for future HTTP server)
+tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"
