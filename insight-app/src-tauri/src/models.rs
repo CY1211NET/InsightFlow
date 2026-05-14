@@ -74,6 +74,8 @@ pub struct WebVisit {
     pub page_title: String,
     pub visit_count: i32,
     pub last_visit: i64,
+    #[serde(default)]
+    pub total_duration: i64,
 }
 
 /// 浏览器插件推送的请求体
@@ -82,6 +84,7 @@ pub struct WebVisitRequest {
     pub url: String,
     pub title: Option<String>,
     pub timestamp: Option<i64>,
+    pub duration: Option<i64>,
 }
 
 /// 每日专注趋势数据点
@@ -152,4 +155,12 @@ pub struct CategoryAppBreakdown {
     pub category: String,
     pub total_secs: i64,
     pub apps: Vec<AppUsage>, // 按时长降序，AppUsage 已在本文件定义
+}
+
+/// 小时分布统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourlyStat {
+    pub hour: u32,        // 0-23
+    pub total_secs: i64,
 }

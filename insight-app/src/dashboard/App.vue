@@ -15,15 +15,24 @@
     <div class="summary">
       <div class="card">
         <span class="card-label">{{ t('dashboard.total') }}</span>
-        <span class="card-value">{{ fmtDur(data.totalSecs) }}</span>
+        <span class="card-value">{{ fmtDur(activeTotalSecs) }}</span>
+        <span v-if="compareData" class="card-diff" :class="diffPct(activeTotalSecs, compareData.totalSecs - (compareData.categoryStats.find(s => s.category === 'afk')?.totalSecs ?? 0)) >= 0 ? 'up' : 'down'">
+          {{ diffPct(activeTotalSecs, compareData.totalSecs - (compareData.categoryStats.find(s => s.category === 'afk')?.totalSecs ?? 0)) >= 0 ? '+' : '' }}{{ diffPct(activeTotalSecs, compareData.totalSecs - (compareData.categoryStats.find(s => s.category === 'afk')?.totalSecs ?? 0)) }}%
+        </span>
       </div>
       <div class="card">
         <span class="card-label">{{ t('dashboard.sessions') }}</span>
-        <span class="card-value">{{ data.activities.length }}</span>
+        <span class="card-value">{{ activeSessionCount }}</span>
+        <span v-if="compareData" class="card-diff" :class="diffPct(activeSessionCount, compareData.activities.filter(a => a.category !== 'afk').length) >= 0 ? 'up' : 'down'">
+          {{ diffPct(activeSessionCount, compareData.activities.filter(a => a.category !== 'afk').length) >= 0 ? '+' : '' }}{{ diffPct(activeSessionCount, compareData.activities.filter(a => a.category !== 'afk').length) }}%
+        </span>
       </div>
       <div class="card">
         <span class="card-label">{{ t('dashboard.focus') }}</span>
         <span class="card-value">{{ fmtDur(focusSecs) }}</span>
+        <span v-if="compareData" class="card-diff" :class="diffPct(focusSecs, compareData.categoryStats.filter(s => s.category === 'dev' || s.category === 'productivity').reduce((sum, s) => sum + s.totalSecs, 0)) >= 0 ? 'up' : 'down'">
+          {{ diffPct(focusSecs, compareData.categoryStats.filter(s => s.category === 'dev' || s.category === 'productivity').reduce((sum, s) => sum + s.totalSecs, 0)) >= 0 ? '+' : '' }}{{ diffPct(focusSecs, compareData.categoryStats.filter(s => s.category === 'dev' || s.category === 'productivity').reduce((sum, s) => sum + s.totalSecs, 0)) }}%
+        </span>
       </div>
     </div>
 
@@ -41,6 +50,22 @@
         :class="{ active: dateRange === tab.key }"
         @click="setDateRange(tab.key as DateRange)"
       >{{ tab.label }}</button>
+      <div class="custom-range" :class="{ active: dateRange === 'custom' }">
+        <input type="date" class="date-input" v-model="customStart" @change="dateRange = 'custom'; setDateRange('custom')" />
+        <span class="range-sep">~</span>
+        <input type="date" class="date-input" v-model="customEnd" @change="dateRange = 'custom'; setDateRange('custom')" />
+      </div>
+      <button class="date-tab compare-btn" :class="{ active: compareMode }" @click="toggleCompare()">
+        {{ t('dashboard.compare') }}
+      </button>
+    </div>
+
+    <!-- Compare date picker -->
+    <div v-if="compareMode" class="compare-bar">
+      <span class="compare-label">{{ t('dashboard.vs') }}:</span>
+      <input type="date" class="date-input" v-model="compareStart" @change="loadCompareData()" />
+      <span class="range-sep">~</span>
+      <input type="date" class="date-input" v-model="compareEnd" @change="loadCompareData()" />
     </div>
 
 
@@ -63,7 +88,7 @@
               {{ t('dashboard.noData') }}
             </div>
             <div
-              v-for="cat in categoryApps"
+              v-for="cat in categoryApps.filter(c => c.category !== 'afk')"
               :key="cat.category"
               class="bar-group"
             >
@@ -99,6 +124,31 @@
                 <div v-if="(categoryAppsByCat[cat.category]?.apps?.length ?? 0) === 0" class="cat-app-empty">
                   {{ t('dashboard.noData') }}
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Hourly Distribution -->
+        <section class="section" v-else-if="secName === 'hourlyDist'">
+          <div class="section-header" @click="toggleSection('hourlyDist')">
+            <h2 class="section-title drag-handle">{{ t('dashboard.hourlyDistribution') }}</h2>
+            <svg class="section-toggle" :class="{ open: !collapsed.hourlyDist }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div v-if="!collapsed.hourlyDist" class="section-body">
+            <div v-if="hourlyData.length === 0" class="empty-hint">
+              {{ t('dashboard.noData') }}
+            </div>
+            <div v-else class="hourly-chart">
+              <div v-for="h in 24" :key="h - 1" class="hourly-col">
+                <span class="hourly-val">{{ hourlyDataMap[h - 1] ? fmtDurShort(hourlyDataMap[h - 1]) : '' }}</span>
+                <div class="hourly-bar-wrap">
+                  <div
+                    class="hourly-bar-fill"
+                    :style="{ height: hourlyBarH(hourlyDataMap[h - 1] ?? 0) + 'px' }"
+                  />
+                </div>
+                <span class="hourly-label">{{ (h - 1) % 2 === 0 ? (h - 1) : '' }}</span>
               </div>
             </div>
           </div>
@@ -231,13 +281,35 @@
             <svg class="section-toggle" :class="{ open: !collapsed.activities }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div v-if="!collapsed.activities" class="section-body">
+            <div class="act-filter-bar">
+              <input
+                class="act-search"
+                v-model="activitySearch"
+                :placeholder="t('dashboard.searchActivities')"
+              />
+              <div class="act-cat-tags">
+                <button
+                  class="cat-tag"
+                  :class="{ active: !activityCategoryFilter }"
+                  @click="activityCategoryFilter = null"
+                >All</button>
+                <button
+                  v-for="stat in data.categoryStats.filter(s => s.category !== 'afk')"
+                  :key="stat.category"
+                  class="cat-tag"
+                  :class="{ active: activityCategoryFilter === stat.category }"
+                  :style="activityCategoryFilter === stat.category ? { background: catColor(stat.category), borderColor: catColor(stat.category), color: '#1c1917' } : {}"
+                  @click="activityCategoryFilter = activityCategoryFilter === stat.category ? null : stat.category"
+                >{{ catLabel(stat.category) }}</button>
+              </div>
+            </div>
             <div class="activity-list">
-              <div v-if="data.activities.length === 0" class="empty-hint">
+              <div v-if="filteredActivities.length === 0" class="empty-hint">
                 {{ t('dashboard.noData') }}
               </div>
               <div
-                v-for="act in data.activities.slice().reverse()"
-                :key="act.id"
+                v-for="(act, idx) in filteredActivities"
+                :key="act.id ?? idx"
                 class="activity-item"
               >
                 <span class="cat-dot" :style="{ background: catColor(act.category) }" />
@@ -248,9 +320,9 @@
                 <div class="act-meta">
                   <span class="act-duration">{{ fmtDur(act.endTime - act.startTime) }}</span>
                   <span class="act-time">{{ fmtTime(act.startTime) }} - {{ fmtTime(act.endTime) }}</span>
-                  <select 
-                    class="act-correct-select" 
-                    :value="act.category" 
+                  <select
+                    class="act-correct-select"
+                    :value="act.category"
                     @change="correctCategory(act, ($event.target as HTMLSelectElement).value)"
                   >
                     <option v-for="mod in moduleConfigs" :key="mod.id" :value="mod.id">{{ mod.name }}</option>
@@ -282,7 +354,8 @@
                   <span class="act-title">{{ visit.pageTitle }}</span>
                 </div>
                 <div class="act-meta">
-                  <span class="act-duration">{{ visit.visitCount }}×</span>
+                  <span class="act-duration">{{ fmtDur(visit.totalDuration) }}</span>
+                  <span class="act-count">{{ visit.visitCount }}×</span>
                   <span class="act-time">{{ fmtTime(visit.lastVisit) }}</span>
                 </div>
               </div>
@@ -294,6 +367,46 @@
           </template>
         </section>
 
+        <!-- Data Management -->
+        <section class="section" v-else-if="secName === 'dataManagement'">
+          <div class="section-header" @click="toggleSection('dataManagement')">
+            <h2 class="section-title drag-handle">{{ t('dashboard.dataManagement') }}</h2>
+            <svg class="section-toggle" :class="{ open: !collapsed.dataManagement }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div v-if="!collapsed.dataManagement" class="section-body">
+            <div class="clear-options">
+              <label class="clear-option">
+                <input type="checkbox" v-model="clearOpts.activities" />
+                <span>{{ t('dashboard.clearActivities') }}</span>
+              </label>
+              <label class="clear-option">
+                <input type="checkbox" v-model="clearOpts.webHistory" />
+                <span>{{ t('dashboard.clearWebHistory') }}</span>
+              </label>
+              <label class="clear-option">
+                <input type="checkbox" v-model="clearOpts.moduleConfig" />
+                <span>{{ t('dashboard.clearModuleConfig') }}</span>
+              </label>
+              <label class="clear-option">
+                <input type="checkbox" v-model="clearOpts.windowSettings" />
+                <span>{{ t('dashboard.clearWindowSettings') }}</span>
+              </label>
+            </div>
+            <div class="module-config-footer">
+              <button
+                class="mini-btn danger"
+                :class="{ confirming: clearConfirming }"
+                :disabled="!anyClearSelected"
+                @click="handleClearData"
+              >{{ clearConfirming ? t('dashboard.clearDataConfirm') : t('dashboard.clearData') }}</button>
+            </div>
+            <div class="export-row">
+              <button class="mini-btn" @click="exportJSON">{{ t('dashboard.exportJSON') }}</button>
+              <button class="mini-btn" @click="exportCSV">{{ t('dashboard.exportCSV') }}</button>
+            </div>
+          </div>
+        </section>
+
       </div>
     </div>
   </div>
@@ -302,7 +415,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { t, loadLocale, getLocale, setLocale, getAvailableLocales } from '../shared/i18n'
+import { t, loadLocale, getLocale, setLocale } from '../shared/i18n'
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -364,11 +477,17 @@ interface WebVisit {
   pageTitle: string
   visitCount: number
   lastVisit: number
+  totalDuration: number
 }
 
 interface DailyFocus {
   date: string       // "YYYY-MM-DD"
   focusSecs: number
+}
+
+interface HourlyStat {
+  hour: number
+  totalSecs: number
 }
 
 // ── Existing reactive state ───────────────────────────────────────────────────
@@ -385,21 +504,41 @@ const moduleConfigs = ref<ModuleConfig[]>([])
 const savingGoal = ref<string | null>(null)
 const categoryApps = ref<CategoryAppBreakdown[]>([])
 const expandedCategory = ref<string | null>(null)
-const expandedActCategory = ref<string | null>(null)
 
-type CollapsibleSection = 'moduleManager' | 'activities' | 'webHistory'
+
+type CollapsibleSection = 'moduleManager' | 'activities' | 'webHistory' | 'dataManagement' | 'hourlyDist'
 const collapsed = ref<Record<CollapsibleSection, boolean>>({
   moduleManager: false,
   activities: false,
   webHistory: false,
+  dataManagement: false,
+  hourlyDist: false,
 })
 
 // ── New reactive state ────────────────────────────────────────────────────────
 
-type DateRange = 'today' | 'yesterday' | 'week' | 'month'
+type DateRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom'
 const dateRange = ref<DateRange>('today')
+const customStart = ref('')
+const customEnd = ref('')
 const weeklySeries = ref<DailyFocus[]>([])
 const webHistory = ref<WebVisit[]>([])
+const hourlyData = ref<HourlyStat[]>([])
+
+// Search & filter
+const activitySearch = ref('')
+const activityCategoryFilter = ref<string | null>(null)
+
+// Compare mode
+const compareMode = ref(false)
+const compareStart = ref('')
+const compareEnd = ref('')
+const compareData = ref<DashboardData | null>(null)
+const compareCategoryApps = ref<CategoryAppBreakdown[]>([])
+
+const clearOpts = ref({ activities: false, webHistory: false, moduleConfig: false, windowSettings: false })
+const clearConfirming = ref(false)
+let clearTimer: ReturnType<typeof setTimeout> | null = null
 
 const layoutOrder = ref([
   'appUsage',
@@ -407,7 +546,8 @@ const layoutOrder = ref([
   'moduleManager',
   'weeklyTrend',
   'activities',
-  'webHistory'
+  'webHistory',
+  'dataManagement',
 ])
 
 let draggedSecIdx: number | null = null
@@ -419,7 +559,7 @@ function onSecDragStart(e: DragEvent, idx: number) {
   }
 }
 
-function onSecDragEnter(e: DragEvent, idx: number) {
+function onSecDragEnter(_e: DragEvent, idx: number) {
   if (draggedSecIdx !== null && draggedSecIdx !== idx) {
     const list = [...layoutOrder.value]
     const item = list.splice(draggedSecIdx, 1)[0]
@@ -464,6 +604,36 @@ const focusSecs = computed(() => {
     .reduce((sum, s) => sum + s.totalSecs, 0)
 })
 
+// 排除 afk 后的总时长和活动数
+const activeTotalSecs = computed(() => {
+  const afkSecs = data.value.categoryStats
+    .filter(s => s.category === 'afk')
+    .reduce((sum, s) => sum + s.totalSecs, 0)
+  return Math.max(0, data.value.totalSecs - afkSecs)
+})
+const activeSessionCount = computed(() => {
+  return data.value.activities.filter(a => a.category !== 'afk').length
+})
+
+// Filtered activities for search/filter
+const filteredActivities = computed(() => {
+  return data.value.activities
+    .filter(a => a.category !== 'afk')
+    .filter(a => !activityCategoryFilter.value || a.category === activityCategoryFilter.value)
+    .filter(a => {
+      if (!activitySearch.value) return true
+      const q = activitySearch.value.toLowerCase()
+      return a.appName.toLowerCase().includes(q) || a.windowTitle.toLowerCase().includes(q)
+    })
+    .slice().reverse()
+})
+
+// Compare diff helpers
+function diffPct(main: number, cmp: number): number {
+  if (cmp === 0) return main > 0 ? 100 : 0
+  return Math.round(((main - cmp) / cmp) * 100)
+}
+
 
 
 // ── Computed: date-range timestamps ──────────────────────────────────────────
@@ -484,6 +654,15 @@ const rangeTimestamps = computed(() => {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
       return { start: Math.floor(monthStart.getTime() / 1000), end: todayStartTs + 86400 }
     }
+    case 'custom': {
+      if (!customStart.value || !customEnd.value) {
+        return { start: todayStartTs, end: todayStartTs + 86400 }
+      }
+      const cs = new Date(customStart.value + 'T00:00:00')
+      const ce = new Date(customEnd.value + 'T00:00:00')
+      const endTs = Math.floor(ce.getTime() / 1000) + 86400
+      return { start: Math.floor(cs.getTime() / 1000), end: endTs }
+    }
   }
 })
 
@@ -496,7 +675,7 @@ const categoryAppsByCat = computed(() => {
 // ── Category helpers ──────────────────────────────────────────────────────────
 
 const maxSecs = computed(() => {
-  return Math.max(...data.value.categoryStats.map(s => s.totalSecs), 1)
+  return Math.max(...data.value.categoryStats.filter(s => s.category !== 'afk').map(s => s.totalSecs), 1)
 })
 
 const moduleById = computed(() => {
@@ -550,6 +729,23 @@ const maxWeeklyFocus = computed(() =>
 function weeklyBarH(secs: number): number {
   if (secs === 0) return 2
   return Math.max((secs / maxWeeklyFocus.value) * 60, 4)
+}
+
+// ── Hourly chart helpers ─────────────────────────────────────────────────────
+
+const hourlyDataMap = computed(() => {
+  const map: Record<number, number> = {}
+  hourlyData.value.forEach(h => { map[h.hour] = h.totalSecs })
+  return map
+})
+
+const maxHourlySecs = computed(() =>
+  Math.max(...hourlyData.value.map(h => h.totalSecs), 1)
+)
+
+function hourlyBarH(secs: number): number {
+  if (secs === 0) return 2
+  return Math.max((secs / maxHourlySecs.value) * 80, 4)
 }
 
 function fmtDurShort(secs: number): string {
@@ -684,6 +880,33 @@ function updateDomains(index: number, value: string) {
   moduleConfigs.value[index].siteDomains = value.split(',').map(s => s.trim()).filter(Boolean)
 }
 
+const anyClearSelected = computed(() => {
+  const o = clearOpts.value
+  return o.activities || o.webHistory || o.moduleConfig || o.windowSettings
+})
+
+function handleClearData() {
+  if (!clearConfirming.value) {
+    clearConfirming.value = true
+    if (clearTimer) clearTimeout(clearTimer)
+    clearTimer = setTimeout(() => { clearConfirming.value = false }, 3000)
+    return
+  }
+  if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
+  clearConfirming.value = false
+
+  const opts = { ...clearOpts.value }
+  invoke('clear_data', { options: opts }).then(() => {
+    clearOpts.value = { activities: false, webHistory: false, moduleConfig: false, windowSettings: false }
+    load()
+    loadModules()
+    loadModuleGoals()
+    loadModuleConfigs()
+  }).catch(e => {
+    console.warn('clear_data failed:', e)
+  })
+}
+
 async function loadCategoryApps() {
   try {
     const { start, end } = rangeTimestamps.value
@@ -694,6 +917,100 @@ async function loadCategoryApps() {
   } catch (e) {
     console.warn('get_category_app_breakdown failed:', e)
   }
+}
+
+async function loadHourlyData() {
+  try {
+    const { start, end } = rangeTimestamps.value
+    hourlyData.value = await invoke<HourlyStat[]>('get_hourly_distribution', {
+      startTs: start,
+      endTs: end,
+    })
+  } catch (e) {
+    console.warn('get_hourly_distribution failed:', e)
+  }
+}
+
+// ── Compare mode ─────────────────────────────────────────────────────────────
+
+async function toggleCompare() {
+  if (compareMode.value) {
+    compareMode.value = false
+    compareData.value = null
+    compareCategoryApps.value = []
+    return
+  }
+  compareMode.value = true
+  // Default: same length period immediately before current range
+  const { start, end } = rangeTimestamps.value
+  const len = end - start
+  const cs = new Date((start - len) * 1000)
+  const ce = new Date((start - 1) * 1000)
+  compareStart.value = cs.toISOString().slice(0, 10)
+  compareEnd.value = ce.toISOString().slice(0, 10)
+  await loadCompareData()
+}
+
+async function loadCompareData() {
+  if (!compareStart.value || !compareEnd.value) return
+  const cs = new Date(compareStart.value + 'T00:00:00')
+  const ce = new Date(compareEnd.value + 'T00:00:00')
+  const startTs = Math.floor(cs.getTime() / 1000)
+  const endTs = Math.floor(ce.getTime() / 1000) + 86400
+  try {
+    const [dd, ca] = await Promise.all([
+      invoke<DashboardData>('get_dashboard_data_range', { startTs, endTs }),
+      invoke<CategoryAppBreakdown[]>('get_category_app_breakdown', { startTs, endTs }),
+    ])
+    compareData.value = dd
+    compareCategoryApps.value = ca
+  } catch (e) {
+    console.warn('loadCompareData failed:', e)
+  }
+}
+
+// ── Data export ──────────────────────────────────────────────────────────────
+
+function downloadFile(content: string, filename: string, type: string) {
+  const blob = new Blob([content], { type })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function exportJSON() {
+  const payload = {
+    dateRange: dateRange.value,
+    range: rangeTimestamps.value,
+    activities: data.value.activities,
+    categoryStats: data.value.categoryStats,
+    categoryApps: categoryApps.value,
+    hourlyDistribution: hourlyData.value,
+    webHistory: webHistory.value,
+    weeklySeries: weeklySeries.value,
+  }
+  downloadFile(JSON.stringify(payload, null, 2), 'insightflow-export.json', 'application/json')
+}
+
+function exportCSV() {
+  const rows = [['app_name', 'window_title', 'category', 'start', 'end', 'duration_secs']]
+  data.value.activities.forEach(a => {
+    rows.push([
+      a.appName,
+      a.windowTitle,
+      a.category,
+      new Date(a.startTime * 1000).toISOString(),
+      new Date(a.endTime * 1000).toISOString(),
+      String(a.endTime - a.startTime),
+    ])
+  })
+  downloadFile(
+    rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n'),
+    'insightflow-export.csv',
+    'text/csv',
+  )
 }
 
 async function saveModuleGoal(category: string, hours: number) {
@@ -718,9 +1035,7 @@ function toggleCategory(cat: string) {
   expandedCategory.value = expandedCategory.value === cat ? null : cat
 }
 
-function toggleActCategory(cat: string) {
-  expandedActCategory.value = expandedActCategory.value === cat ? null : cat
-}
+
 
 
 function appBarWidth(appSecs: number, totalSecs: number): string {
@@ -730,7 +1045,7 @@ function appBarWidth(appSecs: number, totalSecs: number): string {
 
 async function setDateRange(range: DateRange) {
   dateRange.value = range
-  await Promise.all([load(), loadCategoryApps()])
+  await Promise.all([load(), loadCategoryApps(), loadHourlyData()])
 }
 
 function toggleSection(key: CollapsibleSection) {
@@ -753,6 +1068,7 @@ onMounted(async () => {
     loadModuleGoals(),
     loadModuleConfigs(),
     loadCategoryApps(),
+    loadHourlyData(),
   ])
 })
 </script>
@@ -1174,6 +1490,12 @@ onMounted(async () => {
   color: #9e958c;
 }
 
+.act-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #7a746e;
+}
+
 .act-time {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
@@ -1405,6 +1727,46 @@ onMounted(async () => {
   color: #d4726a;
 }
 
+.mini-btn.danger.confirming {
+  background: rgba(220, 90, 90, 0.35);
+  border-color: rgba(220, 90, 90, 0.5);
+  color: #e85555;
+  animation: pulse-danger 0.8s ease infinite;
+}
+
+@keyframes pulse-danger {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.mini-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.clear-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.clear-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #9e958c);
+  cursor: pointer;
+}
+
+.clear-option input[type="checkbox"] {
+  accent-color: #c47a5a;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
 .module-goal-row {
   display: flex;
   align-items: center;
@@ -1536,5 +1898,203 @@ onMounted(async () => {
 }
 .drag-handle:active {
   cursor: grabbing;
+}
+
+/* ── Custom date range ──────────────────────────────────────────────────────── */
+
+.custom-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.range-sep {
+  color: #5a544e;
+  font-size: 11px;
+}
+
+.date-input {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  color: #6e6760;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 4px 6px;
+  height: 28px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.date-input:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #9e958c;
+}
+.date-input:focus {
+  outline: none;
+  border-color: rgba(196, 122, 90, 0.25);
+  color: #c47a5a;
+}
+
+.custom-range.active .date-input {
+  background: rgba(196, 122, 90, 0.15);
+  border-color: rgba(196, 122, 90, 0.25);
+  color: #c47a5a;
+}
+
+/* Color scheme for date input calendar icon */
+.date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.5);
+  cursor: pointer;
+}
+
+/* ── Compare mode ──────────────────────────────────────────────────────────── */
+
+.compare-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px 10px;
+}
+
+.compare-label {
+  font-size: 11px;
+  color: #5a544e;
+  font-family: 'Outfit', sans-serif;
+}
+
+.card-diff {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 2px;
+}
+.card-diff.up {
+  color: #5a9e6f;
+}
+.card-diff.down {
+  color: #d4726a;
+}
+
+/* ── Hourly chart ──────────────────────────────────────────────────────────── */
+
+.hourly-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding-top: 4px;
+}
+
+.hourly-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.hourly-val {
+  font-size: 7px;
+  color: #6e6760;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  height: 10px;
+  line-height: 10px;
+}
+
+.hourly-bar-wrap {
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.hourly-bar-fill {
+  width: 100%;
+  background: #c47a5a;
+  border-radius: 3px 3px 0 0;
+  transition: height 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  min-height: 2px;
+}
+
+.hourly-label {
+  font-size: 8px;
+  color: #5a544e;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── Activity search & filter ──────────────────────────────────────────────── */
+
+.act-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.act-search {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  color: #d4cdc5;
+  font-size: 11px;
+  font-family: 'Outfit', sans-serif;
+  padding: 6px 10px;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+.act-search::placeholder {
+  color: #5a544e;
+}
+.act-search:focus {
+  outline: none;
+  border-color: rgba(196, 122, 90, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.act-cat-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cat-tag {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  color: #6e6760;
+  font-size: 10px;
+  font-family: 'Outfit', sans-serif;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cat-tag:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #9e958c;
+}
+.cat-tag.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e8e0d8;
+}
+
+/* ── Export buttons ────────────────────────────────────────────────────────── */
+
+.export-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 </style>

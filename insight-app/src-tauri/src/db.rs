@@ -1,5 +1,5 @@
 use crate::models::{
-    Activity, AppUsage, CategoryAppBreakdown, CategoryStat, DailyFocus, ModuleGoals,
+    Activity, AppUsage, CategoryAppBreakdown, CategoryStat, DailyFocus, HourlyStat, ModuleGoals,
     ModuleProgress, WebVisit,
 };
 use log::{error, info, warn};
@@ -33,6 +33,11 @@ pub fn init_db(db_path: &Path) -> Result<Connection> {
         CREATE INDEX IF NOT EXISTS idx_web_history_domain ON web_history(domain);
     ",
     )?;
+
+    // 迁移：为 web_history 增加 total_duration 列（已有则忽略）
+    let _ = conn.execute_batch(
+        "ALTER TABLE web_history ADD COLUMN total_duration INTEGER NOT NULL DEFAULT 0;",
+    );
 
     repair_orphan_records(&conn)?;
     info!("Database initialized at: {}", db_path.display());
@@ -160,13 +165,14 @@ pub fn query_today_category_stats(conn: &Connection) -> Result<Vec<CategoryStat>
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-/// 插入或更新浏览器访问记录（按 domain+url 去重）
+/// 插入或更新浏览器访问记录（按 domain+url 去重，累加停留时长）
 pub fn upsert_web_visit(
     conn: &Connection,
     domain: &str,
     url: &str,
     page_title: &str,
     timestamp: i64,
+    duration_secs: i64,
 ) -> Result<i64> {
     let existing: Option<i64> = conn
         .query_row(
@@ -179,15 +185,15 @@ pub fn upsert_web_visit(
     match existing {
         Some(id) => {
             conn.execute(
-                "UPDATE web_history SET visit_count = visit_count + 1, last_visit = ?1, page_title = ?2 WHERE id = ?3",
-                params![timestamp, page_title, id],
+                "UPDATE web_history SET visit_count = visit_count + 1, last_visit = ?1, page_title = ?2, total_duration = total_duration + ?3 WHERE id = ?4",
+                params![timestamp, page_title, duration_secs, id],
             )?;
             Ok(id)
         }
         None => {
             conn.execute(
-                "INSERT INTO web_history (domain, url, page_title, visit_count, last_visit) VALUES (?1, ?2, ?3, 1, ?4)",
-                params![domain, url, page_title, timestamp],
+                "INSERT INTO web_history (domain, url, page_title, visit_count, last_visit, total_duration) VALUES (?1, ?2, ?3, 1, ?4, ?5)",
+                params![domain, url, page_title, timestamp, duration_secs],
             )?;
             Ok(conn.last_insert_rowid())
         }
@@ -304,6 +310,25 @@ pub fn query_category_secs_today(conn: &Connection, category: &str) -> i64 {
          FROM activities
          WHERE start_time >= ?1 AND category = ?2 AND end_time > start_time",
         rusqlite::params![today_start, category],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+}
+
+/// 查询今日某应用的累计时长（秒）
+pub fn query_app_secs_today(conn: &Connection, app_name: &str) -> i64 {
+    use chrono::Local;
+    let today_start = Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|dt| dt.and_local_timezone(Local).earliest())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+    conn.query_row(
+        "SELECT COALESCE(SUM(end_time - start_time), 0)
+         FROM activities
+         WHERE start_time >= ?1 AND app_name = ?2 AND end_time > start_time",
+        rusqlite::params![today_start, app_name],
         |row| row.get::<_, i64>(0),
     )
     .unwrap_or(0)
@@ -451,6 +476,45 @@ pub fn query_category_app_breakdown(
     Ok(result)
 }
 
+/// 清空所有活动记录
+pub fn clear_activities(conn: &Connection) -> Result<usize> {
+    let count = conn.execute("DELETE FROM activities", [])?;
+    info!("Cleared {count} activity records");
+    Ok(count)
+}
+
+/// 清空所有网页访问记录
+pub fn clear_web_history(conn: &Connection) -> Result<usize> {
+    let count = conn.execute("DELETE FROM web_history", [])?;
+    info!("Cleared {count} web history records");
+    Ok(count)
+}
+
+/// 查询指定时间范围内的小时分布（按 0-23 小时分组）
+pub fn query_hourly_distribution(
+    conn: &Connection,
+    start: i64,
+    end: i64,
+) -> Result<Vec<HourlyStat>> {
+    let mut stmt = conn.prepare(
+        "SELECT CAST(strftime('%H', start_time, 'unixepoch', 'localtime') AS INTEGER) as hour,
+                SUM(end_time - start_time) as total_secs
+         FROM activities
+         WHERE start_time >= ?1 AND start_time < ?2 AND end_time > start_time
+         GROUP BY hour
+         ORDER BY hour ASC",
+    )?;
+
+    let rows = stmt.query_map(params![start, end], |row| {
+        Ok(HourlyStat {
+            hour: row.get(0)?,
+            total_secs: row.get(1)?,
+        })
+    })?;
+
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
 /// 查询今日浏览器访问记录（按访问次数降序）
 pub fn query_today_web_history(conn: &Connection) -> Result<Vec<WebVisit>> {
     use chrono::Local;
@@ -463,10 +527,10 @@ pub fn query_today_web_history(conn: &Connection) -> Result<Vec<WebVisit>> {
         .timestamp();
 
     let mut stmt = conn.prepare(
-        "SELECT id, domain, url, page_title, visit_count, last_visit
+        "SELECT id, domain, url, page_title, visit_count, last_visit, total_duration
          FROM web_history
          WHERE last_visit >= ?1
-         ORDER BY visit_count DESC",
+         ORDER BY total_duration DESC",
     )?;
 
     let rows = stmt.query_map(params![today_start], |row| {
@@ -477,6 +541,7 @@ pub fn query_today_web_history(conn: &Connection) -> Result<Vec<WebVisit>> {
             page_title: row.get(3)?,
             visit_count: row.get(4)?,
             last_visit: row.get(5)?,
+            total_duration: row.get(6)?,
         })
     })?;
 

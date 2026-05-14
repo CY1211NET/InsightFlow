@@ -160,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -300,11 +300,18 @@ function pomodoroSkip() {
 }
 
 async function togglePomodoro() {
-  showPomodoro.value = !showPomodoro.value
-  if (showSettings.value) showSettings.value = false
-  if (showModules.value) { showModules.value = false; expandedModule.value = null }
-  const h = showPomodoro.value ? COLLAPSED_H + 90 : COLLAPSED_H
-  try { await invoke('resize_overlay', { height: h }) } catch {}
+  if (!showPomodoro.value) {
+    if (showSettings.value) showSettings.value = false
+    if (showModules.value) { showModules.value = false; expandedModule.value = null }
+    try { await invoke('resize_overlay', { height: COLLAPSED_H + 110 }) } catch {}
+    showPomodoro.value = true
+  } else {
+    showPomodoro.value = false
+    setTimeout(async () => {
+      if (!showSettings.value && !showModules.value)
+        try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
+    }, 200)
+  }
 }
 
 // ── Distraction alert state ──
@@ -352,7 +359,7 @@ function catLabel(cat: string) {
 
 const catColor = computed(() => catColorOf(display.value.category))
 
-const barWidth = computed(() => Math.min(display.value.goalPct, 100) + '%')
+
 
 // Goal for current active category (seconds)
 const currentModuleGoalSecs = computed(() =>
@@ -496,16 +503,7 @@ async function onOpacityChange(e: Event) {
   }
 }
 
-async function onGoalChange(e: Event) {
-  const hours = Number((e.target as HTMLInputElement).value)
-  dailyGoalHours.value = hours
-  try {
-    await invoke('set_daily_goal', { goalSecs: Math.round(hours * 3600) })
-    await refresh()
-  } catch (err) {
-    console.warn('set_daily_goal failed:', err)
-  }
-}
+
 
 async function onModuleGoalChange(category: string, e: Event) {
   const hours = Number((e.target as HTMLInputElement).value)
@@ -574,21 +572,22 @@ async function loadModuleProgress() {
 // Overlay resize heights
 // ──────────────────────────────────────────────
 const COLLAPSED_H = 180
-const EXPANDED_H = 320
-const EXPANDED_MODS_H = 360   // modules panel
-const EXPANDED_SETS_H = 340   // settings panel (enlarged for per-category goals)
+
+const EXPANDED_MODS_H = 370   // modules panel
 
 async function toggleSettings() {
   if (!showSettings.value) {
     if (showModules.value) { showModules.value = false; expandedModule.value = null }
+    if (showPomodoro.value) { showPomodoro.value = false }
     await loadModuleConfigs()
     await loadModuleGoals()
-    try { await invoke('resize_overlay', { height: EXPANDED_SETS_H }) } catch (e) { console.warn('resize_overlay failed:', e) }
+    const expandedSetsHeight = 270 + Math.ceil(moduleConfigs.value.length / 2) * 40;
+    try { await invoke('resize_overlay', { height: expandedSetsHeight }) } catch (e) { console.warn('resize_overlay failed:', e) }
     showSettings.value = true
   } else {
     showSettings.value = false
     setTimeout(async () => {
-      if (!showModules.value)
+      if (!showModules.value && !showPomodoro.value)
         try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch (e) { console.warn('resize_overlay failed:', e) }
     }, 200)
   }
@@ -597,6 +596,7 @@ async function toggleSettings() {
 async function toggleModules() {
   if (!showModules.value) {
     if (showSettings.value) { showSettings.value = false }
+    if (showPomodoro.value) { showPomodoro.value = false }
     await loadModuleConfigs()
     await loadModuleProgress()
     try { await invoke('resize_overlay', { height: EXPANDED_MODS_H }) } catch {}
@@ -605,7 +605,7 @@ async function toggleModules() {
     showModules.value = false
     expandedModule.value = null
     setTimeout(async () => {
-      if (!showSettings.value)
+      if (!showSettings.value && !showPomodoro.value)
         try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
     }, 200)
   }
@@ -706,41 +706,26 @@ onUnmounted(() => {
   --surface: rgba(0, 0, 0, 0.04);
   --surface-hover: rgba(0, 0, 0, 0.07);
   --track: rgba(0, 0, 0, 0.06);
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
-  --shadow-hover: 0 8px 40px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
 
   width: calc(100vw - 20px);
   margin: 10px;
   box-sizing: border-box;
   background: var(--bg);
-  backdrop-filter: blur(24px) saturate(130%);
-  -webkit-backdrop-filter: blur(24px) saturate(130%);
   border: 1px solid var(--border);
   border-radius: 25px;
-  padding: 18px 20px 14px;
+  padding: 18px 20px 24px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   opacity: 1;
-  transition: opacity 1.2s ease, box-shadow 0.3s ease, background 0.4s ease;
-  box-shadow: var(--shadow);
+  transition: opacity 1.2s ease, background 0.4s ease;
   cursor: default;
   overflow: hidden;
   font-family: 'Outfit', sans-serif;
   position: relative;
 }
 
-/* subtle paper texture */
-.widget::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E");
-  background-size: 128px 128px;
-  pointer-events: none;
-  border-radius: inherit;
-  overflow: hidden;
-}
+
 
 /* ─── Night theme ─── */
 .widget.night {
@@ -753,12 +738,9 @@ onUnmounted(() => {
   --surface: rgba(255, 255, 255, 0.05);
   --surface-hover: rgba(255, 255, 255, 0.08);
   --track: rgba(255, 255, 255, 0.06);
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
-  --shadow-hover: 0 8px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .widget.hovered {
-  box-shadow: var(--shadow-hover);
 }
 
 .widget.fading {
@@ -1286,7 +1268,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  backdrop-filter: blur(6px);
   z-index: 99;
 }
 

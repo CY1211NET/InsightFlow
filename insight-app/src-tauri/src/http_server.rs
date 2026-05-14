@@ -62,9 +62,14 @@ async fn handle_web_visit(
         .timestamp
         .map(|t| if t > 1_000_000_000_000 { t / 1000 } else { t })
         .unwrap_or_else(|| chrono::Utc::now().timestamp());
+    // 插件发送毫秒 duration，转为秒
+    let duration_secs = payload
+        .duration
+        .map(|d| if d > 1000 { d / 1000 } else { d })
+        .unwrap_or(0);
 
     let db = state.db_conn.lock().unwrap();
-    match db::upsert_web_visit(&db, &domain, &payload.url, &title, ts) {
+    match db::upsert_web_visit(&db, &domain, &payload.url, &title, ts, duration_secs) {
         Ok(_) => {
             info!("Web visit: {domain} - {title}");
             StatusCode::OK

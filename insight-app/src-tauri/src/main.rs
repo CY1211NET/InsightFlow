@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod autostart;
 mod classifier;
 mod db;
@@ -20,8 +22,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use models::{
-    CategoryAppBreakdown, DailyFocus, DashboardData, ModuleConfig, ModuleGoals, ModuleProgress,
-    OverlayData, WebVisit,
+    CategoryAppBreakdown, DailyFocus, DashboardData, HourlyStat, ModuleConfig, ModuleGoals,
+    ModuleProgress, OverlayData, WebVisit,
 };
 
 #[derive(Debug, Serialize)]
@@ -63,6 +65,43 @@ fn correct_activity_category(
         ).map_err(|e| e.to_string())?;
     }
     
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct ClearDataOptions {
+    activities: bool,
+    #[serde(rename = "webHistory")]
+    web_history: bool,
+    #[serde(rename = "moduleConfig")]
+    module_config: bool,
+    #[serde(rename = "windowSettings")]
+    window_settings: bool,
+}
+
+#[tauri::command]
+fn clear_data(state: State<'_, AppState>, options: ClearDataOptions) -> Result<(), String> {
+    if options.activities {
+        let db = state.db_conn.lock().unwrap();
+        db::clear_activities(&db).map_err(|e| e.to_string())?;
+    }
+    if options.web_history {
+        let db = state.db_conn.lock().unwrap();
+        db::clear_web_history(&db).map_err(|e| e.to_string())?;
+    }
+    if options.module_config {
+        let _ = std::fs::remove_file(&state.config_path);
+        let mut classifier = state.classifier.lock().unwrap();
+        *classifier = classifier::ClassifierConfig::load(&state.config_path);
+        info!("Module config reset to defaults");
+    }
+    if options.window_settings {
+        let window_json = state.data_dir.join("window.json");
+        let _ = std::fs::remove_file(window_json);
+        let mut ws = state.window_state.lock().unwrap();
+        *ws = WindowState::default();
+        info!("Window settings reset to defaults");
+    }
     Ok(())
 }
 
@@ -159,6 +198,16 @@ fn get_category_app_breakdown(
 ) -> Result<Vec<CategoryAppBreakdown>, String> {
     let db = state.db_conn.lock().unwrap();
     db::query_category_app_breakdown(&db, start_ts, end_ts).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_hourly_distribution(
+    state: State<'_, AppState>,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<Vec<HourlyStat>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::query_hourly_distribution(&db, start_ts, end_ts).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -464,7 +513,10 @@ fn set_window_opacity(hwnd: HWND, opacity: f64) {
 }
 
 fn main() {
+    #[cfg(debug_assertions)]
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    #[cfg(not(debug_assertions))]
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let data_dir = get_data_dir();
     std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
@@ -490,6 +542,7 @@ fn main() {
             get_dashboard_data,
             get_dashboard_data_range,
             get_category_app_breakdown,
+            get_hourly_distribution,
             get_weekly_focus_series,
             get_web_history,
             show_dashboard,
@@ -511,7 +564,8 @@ fn main() {
             set_autostart,
             resize_overlay,
             get_distraction_state,
-            correct_activity_category
+            correct_activity_category,
+            clear_data
         ])
         .setup(move |app| {
             setup_tray(app)?;
