@@ -450,7 +450,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { t, loadLocale, getLocale, setLocale } from '../shared/i18n'
+import { t, loadLocale, getLocale, setLocale, watchLocale } from '../shared/i18n'
 import { CATEGORY, isFocus } from '../shared/constants'
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
@@ -822,6 +822,7 @@ function dayLabel(dateStr: string): string {
 
 async function load() {
   await loadLocale()
+  watchLocale()
   try {
     const { start, end } = rangeTimestamps.value
     data.value = await invoke<DashboardData>('get_dashboard_data_range', {
@@ -2029,7 +2030,12 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: 4px;
+  flex: 1;
+}
+
+.custom-range .date-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .range-sep {
@@ -2038,6 +2044,8 @@ onMounted(async () => {
 }
 
 .date-input {
+  -webkit-appearance: none;
+  appearance: none;
   background: var(--surface-03);
   border: 1px solid var(--surface-05);
   border-radius: 8px;
@@ -2048,6 +2056,10 @@ onMounted(async () => {
   height: 28px;
   cursor: pointer;
   transition: all 0.15s ease;
+  color-scheme: light;
+}
+:root.night .date-input {
+  color-scheme: dark;
 }
 .date-input:hover {
   border-color: var(--surface-10);
@@ -2065,10 +2077,12 @@ onMounted(async () => {
   color: #c47a5a;
 }
 
-/* Color scheme for date input calendar icon */
 .date-input::-webkit-calendar-picker-indicator {
   filter: invert(0.5);
   cursor: pointer;
+}
+:root.night .date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
 }
 
 /* ── Compare mode ──────────────────────────────────────────────────────────── */

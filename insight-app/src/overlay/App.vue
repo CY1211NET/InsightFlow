@@ -103,7 +103,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { t, loadLocale, getLocale, setLocale } from '../shared/i18n'
+import { t, loadLocale, getLocale, setLocale, watchLocale } from '../shared/i18n'
 import { CATEGORY, isFocus } from '../shared/constants'
 import type { ModuleConfig, ModuleProgress, OverlayData } from './types'
 import { usePomodoro } from './composables/usePomodoro'
@@ -480,6 +480,7 @@ function stopSessionTick() {
 // ──────────────────────────────────────────────
 onMounted(async () => {
   await loadLocale()
+  watchLocale()
   await loadTheme()
   await loadSettings()
   await loadAutostart()

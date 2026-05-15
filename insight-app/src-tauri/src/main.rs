@@ -412,13 +412,14 @@ fn get_locale(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn set_locale(state: State<'_, AppState>, locale: String) -> Result<(), String> {
+fn set_locale(app: tauri::AppHandle, state: State<'_, AppState>, locale: String) -> Result<(), String> {
     if locale != "zh-CN" && locale != "en" {
         return Err(format!("Unsupported locale: {locale}"));
     }
     let locale_path = state.data_dir.join("locale.txt");
     std::fs::write(&locale_path, &locale).map_err(|e| e.to_string())?;
     info!("Locale set to: {locale}");
+    let _ = app.emit("locale-changed", &locale);
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import zhCN from "./locales/zh-CN";
 import en from "./locales/en";
 
@@ -53,4 +54,13 @@ export function getAvailableLocales(): { code: Locale; name: string }[] {
     { code: "zh-CN", name: "简体中文" },
     { code: "en", name: "English" },
   ];
+}
+
+export function watchLocale() {
+  listen<string>("locale-changed", (event) => {
+    const locale = event.payload;
+    if (locale === "en" || locale === "zh-CN") {
+      currentLocale.value = locale;
+    }
+  });
 }
