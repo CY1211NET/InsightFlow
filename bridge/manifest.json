@@ -3,7 +3,7 @@
   "name": "InsightFlow Bridge",
   "version": "1.0.0",
   "description": "Sends browser tab URL data to InsightFlow desktop app for productivity tracking.",
-  "permissions": ["tabs", "activeTab"],
+  "permissions": ["tabs", "activeTab", "alarms"],
   "host_permissions": ["http://127.0.0.1:5678/*"],
   "background": {
     "service_worker": "background.js"

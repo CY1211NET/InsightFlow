@@ -7,7 +7,8 @@ Welcome to **InsightFlow**! This is a modern, desktop-based time tracking and ef
 ---
 
 ## 🌟 Core Features
-
+![功能展示1](ScreenShot_2026-05-15_100152_424.png)
+![功能展示2](ScreenShot_2026-05-15_100323_880.png)
 ### 1. Desktop Overlay
 The overlay is the visual core of InsightFlow. It stays on top of your desktop to provide real-time feedback on your time:
 - **Real-time Activity Monitoring**: Automatically identifies the application currently in the foreground and displays its assigned category (e.g., Development, Entertainment, Productivity).
@@ -45,11 +46,11 @@ To accurately record and categorize your time spent in the web browser (distingu
 
 ## ⌨️ Shortcuts & Tips
 
-| Action | How to Trigger | Description |
-| :--- | :--- | :--- |
-| **Drag Overlay** | Click & hold the top bar | Click and hold the app name/timer area to drag the overlay anywhere on your screen. |
-| **Toggle Click-Through** | `Ctrl` + `Shift` + `I` | Global shortcut. When enabled, mouse clicks will pass right through the overlay, allowing you to interact with the windows underneath. (Press again to disable) |
-| **Hide/Expand Panels** | Click icons/modules | Click various modules and icons to toggle smooth expand/collapse animations, keeping the overlay minimal. |
+| Action                   | How to Trigger           | Description                                                                                                                                                     |
+| :----------------------- | :----------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Drag Overlay**         | Click & hold the top bar | Click and hold the app name/timer area to drag the overlay anywhere on your screen.                                                                             |
+| **Toggle Click-Through** | `Ctrl` + `Shift` + `I`   | Global shortcut. When enabled, mouse clicks will pass right through the overlay, allowing you to interact with the windows underneath. (Press again to disable) |
+| **Hide/Expand Panels**   | Click icons/modules      | Click various modules and icons to toggle smooth expand/collapse animations, keeping the overlay minimal.                                                       |
 
 ---
 
