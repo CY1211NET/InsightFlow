@@ -1,13 +1,86 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
+
+/// 应用/活动分类枚举 — 消灭魔法字符串
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Category {
+    Dev,
+    Productivity,
+    Entertainment,
+    Social,
+    Browser,
+    Afk,
+    Other,
+    Uncategorized,
+}
+
+impl Category {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Productivity => "productivity",
+            Self::Entertainment => "entertainment",
+            Self::Social => "social",
+            Self::Browser => "browser",
+            Self::Afk => "afk",
+            Self::Other => "other",
+            Self::Uncategorized => "uncategorized",
+        }
+    }
+
+    pub fn is_focus(&self) -> bool {
+        matches!(self, Self::Dev | Self::Productivity)
+    }
+
+    pub fn is_distraction(&self) -> bool {
+        matches!(self, Self::Entertainment | Self::Social)
+    }
+
+    pub fn is_afk(&self) -> bool {
+        matches!(self, Self::Afk)
+    }
+
+    /// 所有专注分类的字符串切片，供 SQL IN 查询使用
+    pub fn focus_strs() -> [&'static str; 2] {
+        [Self::Dev.as_str(), Self::Productivity.as_str()]
+    }
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Category {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "dev" => Ok(Self::Dev),
+            "productivity" => Ok(Self::Productivity),
+            "entertainment" => Ok(Self::Entertainment),
+            "social" => Ok(Self::Social),
+            "browser" => Ok(Self::Browser),
+            "afk" => Ok(Self::Afk),
+            "other" => Ok(Self::Other),
+            "uncategorized" => Ok(Self::Uncategorized),
+            _ => Ok(Self::Uncategorized), // 未知分类归为 uncategorized
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Activity {
     pub id: Option<i64>,
     pub app_name: String,
     pub window_title: String,
     pub category: String,
     pub start_time: i64,
-    pub end_time: i64,
+    /// None = 活动进行中（SQL NULL），Some = 已结束
+    pub end_time: Option<i64>,
 }
 
 /// 发送给前端的悬浮窗数据
@@ -28,12 +101,12 @@ impl Default for OverlayData {
     fn default() -> Self {
         Self {
             current_app: "InsightFlow 启动中...".into(),
-            category: "other".into(),
+            category: Category::Other.as_str().into(),
             session_secs: 0,
             focus_secs: 0,
             goal_pct: 0,
             category_secs: 0,
-            ai_hint: "开始记录你的专注时间 🚀".into(),
+            ai_hint: "initializing".into(),
         }
     }
 }

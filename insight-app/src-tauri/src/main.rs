@@ -22,8 +22,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use models::{
-    CategoryAppBreakdown, DailyFocus, DashboardData, HourlyStat, ModuleConfig, ModuleGoals,
-    ModuleProgress, OverlayData, WebVisit,
+    Category, CategoryAppBreakdown, DailyFocus, DashboardData, HourlyStat, ModuleConfig,
+    ModuleGoals, ModuleProgress, OverlayData, WebVisit,
 };
 
 #[derive(Debug, Serialize)]
@@ -113,7 +113,14 @@ struct WindowState {
     daily_goal_secs: i64,
     #[serde(default)]
     module_goals: ModuleGoals,
+    #[serde(default = "default_focus_mins")]
+    pomodoro_focus_mins: i32,
+    #[serde(default = "default_break_mins")]
+    pomodoro_break_mins: i32,
 }
+
+fn default_focus_mins() -> i32 { 25 }
+fn default_break_mins() -> i32 { 5 }
 
 impl Default for WindowState {
     fn default() -> Self {
@@ -123,6 +130,8 @@ impl Default for WindowState {
             opacity: 1.0,
             daily_goal_secs: 14400,
             module_goals: ModuleGoals::default(),
+            pomodoro_focus_mins: 25,
+            pomodoro_break_mins: 5,
         }
     }
 }
@@ -144,7 +153,7 @@ fn get_overlay_data(state: State<'_, AppState>) -> Result<OverlayData, String> {
 
     Ok(OverlayData {
         current_app: "InsightFlow".to_string(),
-        category: "dev".to_string(),
+        category: Category::Dev.as_str().to_string(),
         session_secs: 0,
         focus_secs,
         goal_pct,
@@ -219,8 +228,18 @@ fn get_weekly_focus_series(state: State<'_, AppState>) -> Result<Vec<DailyFocus>
 #[tauri::command]
 fn show_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("dashboard") {
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
+        let is_visible = win.is_visible().unwrap_or(false);
+        let is_minimized = win.is_minimized().unwrap_or(false);
+
+        if is_visible && !is_minimized {
+            win.hide().map_err(|e| e.to_string())?;
+        } else {
+            if is_minimized {
+                win.unminimize().unwrap_or(());
+            }
+            win.show().map_err(|e| e.to_string())?;
+            win.set_focus().map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -242,6 +261,25 @@ fn save_window_state(data_dir: &PathBuf, state: &WindowState) {
     if let Ok(content) = serde_json::to_string_pretty(state) {
         let _ = std::fs::write(path, content);
     }
+}
+
+#[tauri::command]
+fn get_pomodoro_settings(state: State<'_, AppState>) -> Result<(i32, i32), String> {
+    let ws = state.window_state.lock().unwrap();
+    Ok((ws.pomodoro_focus_mins, ws.pomodoro_break_mins))
+}
+
+#[tauri::command]
+fn set_pomodoro_settings(
+    state: State<'_, AppState>,
+    focus_mins: i32,
+    break_mins: i32,
+) -> Result<(), String> {
+    let mut ws = state.window_state.lock().unwrap();
+    ws.pomodoro_focus_mins = focus_mins;
+    ws.pomodoro_break_mins = break_mins;
+    save_window_state(&state.data_dir, &ws);
+    Ok(())
 }
 
 #[tauri::command]
@@ -339,7 +377,7 @@ fn save_modules(state: State<'_, AppState>, modules: Vec<ModuleConfig>) -> Resul
 fn resize_overlay(app: tauri::AppHandle, height: u32) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("overlay") {
         win.set_size(tauri::Size::Logical(tauri::LogicalSize {
-            width: 300.0,
+            width: 320.0,
             height: height as f64,
         }))
         .map_err(|e| e.to_string())?;
@@ -397,13 +435,14 @@ fn get_theme(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn set_theme(state: State<'_, AppState>, theme: String) -> Result<(), String> {
+fn set_theme(app: tauri::AppHandle, state: State<'_, AppState>, theme: String) -> Result<(), String> {
     if theme != "day" && theme != "night" {
         return Err(format!("Unsupported theme: {theme}"));
     }
     let theme_path = state.data_dir.join("theme.txt");
     std::fs::write(&theme_path, &theme).map_err(|e| e.to_string())?;
     info!("Theme set to: {theme}");
+    let _ = app.emit("theme-changed", &theme);
     Ok(())
 }
 
@@ -565,7 +604,9 @@ fn main() {
             resize_overlay,
             get_distraction_state,
             correct_activity_category,
-            clear_data
+            clear_data,
+            get_pomodoro_settings,
+            set_pomodoro_settings
         ])
         .setup(move |app| {
             setup_tray(app)?;
@@ -659,4 +700,6 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    monitor::cleanup_monitoring();
 }

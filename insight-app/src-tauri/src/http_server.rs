@@ -7,7 +7,7 @@ use axum::{
 use log::{info, warn};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 use crate::classifier::ClassifierConfig;
 use crate::db;
@@ -108,7 +108,10 @@ pub fn start_http_server(
         };
 
         let cors = CorsLayer::new()
-            .allow_origin(AllowOrigin::any())
+            .allow_origin([
+                "http://127.0.0.1:5678".parse().unwrap(),
+                "http://localhost:5678".parse().unwrap(),
+            ])
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,

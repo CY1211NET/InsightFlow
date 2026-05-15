@@ -1,26 +1,116 @@
 use chrono::Utc;
 use log::{error, info};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
-use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowTextW, GetWindowThreadProcessId, EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS,
+    GetWindowTextW, GetWindowThreadProcessId, EVENT_SYSTEM_FOREGROUND,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 
 const IDLE_THRESHOLD_SECS: i64 = 300; // 5 分钟
 const IDLE_POLL_INTERVAL_MS: u64 = 5000; // 5 秒
 
+/// 今日统计缓存 — 使用 AtomicI64 避免读取时需要获取 MonitorContext 锁
+struct DailyCache {
+    focus_secs: AtomicI64,
+    category_secs: Mutex<HashMap<String, i64>>,
+    app_secs: Mutex<HashMap<String, i64>>,
+}
+
+static DAILY_CACHE: std::sync::OnceLock<DailyCache> = std::sync::OnceLock::new();
+
+fn get_cache() -> Option<&'static DailyCache> {
+    DAILY_CACHE.get()
+}
+
+/// 从 DB 加载今日统计数据到缓存（启动时调用一次）
+fn init_daily_cache(db_conn: &Arc<Mutex<rusqlite::Connection>>) {
+    let db = match db_conn.lock() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to lock DB for cache init: {e}");
+            return;
+        }
+    };
+
+    let focus = crate::db::query_today_focus_secs(&db).unwrap_or(0);
+    let cat_stats = crate::db::query_today_category_stats(&db).unwrap_or_default();
+
+    let mut cat_map = HashMap::new();
+    for stat in &cat_stats {
+        cat_map.insert(stat.category.clone(), stat.total_secs);
+    }
+
+    // 从 activities 表加载各 app 的今日累计时长
+    let mut app_map = HashMap::new();
+    let activities = crate::db::query_today_activities(&db).unwrap_or_default();
+    for a in &activities {
+        *app_map.entry(a.app_name.clone()).or_insert(0) += a.end_time.unwrap_or(0) - a.start_time;
+    }
+
+    drop(db);
+
+    let cache = DailyCache {
+        focus_secs: AtomicI64::new(focus),
+        category_secs: Mutex::new(cat_map),
+        app_secs: Mutex::new(app_map),
+    };
+    DAILY_CACHE.set(cache).ok();
+    info!("Daily cache initialized: focus={focus}s");
+}
+
+/// 更新缓存：插入新活动后累加计数器
+fn update_cache_after_insert(category: &str, app_name: &str, duration_secs: i64) {
+    if let Some(cache) = get_cache() {
+        let is_focus = category.parse::<Category>().unwrap_or(Category::Uncategorized).is_focus();
+        if is_focus {
+            cache.focus_secs.fetch_add(duration_secs, Ordering::Relaxed);
+        }
+        if let Ok(mut map) = cache.category_secs.lock() {
+            *map.entry(category.to_string()).or_insert(0) += duration_secs;
+        }
+        if let Ok(mut map) = cache.app_secs.lock() {
+            *map.entry(app_name.to_string()).or_insert(0) += duration_secs;
+        }
+    }
+}
+
+/// 从缓存读取 focus_secs
+fn cached_focus_secs() -> i64 {
+    get_cache()
+        .map(|c| c.focus_secs.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+/// 从缓存读取某分类的累计时长
+fn cached_category_secs(category: &str) -> i64 {
+    get_cache()
+        .and_then(|c| c.category_secs.lock().ok())
+        .and_then(|m| m.get(category).copied())
+        .unwrap_or(0)
+}
+
+/// 从缓存读取某应用的累计时长
+fn cached_app_secs(app_name: &str) -> i64 {
+    get_cache()
+        .and_then(|c| c.app_secs.lock().ok())
+        .and_then(|m| m.get(app_name).copied())
+        .unwrap_or(0)
+}
+
 use crate::classifier::ClassifierConfig;
-use crate::db::{insert_activity, query_today_focus_secs, update_activity_end};
-use crate::models::{Activity, CurrentSession, OverlayData};
+use crate::db::{insert_ongoing_activity, update_activity_end};
+use crate::models::{Activity, Category, CurrentSession, OverlayData};
 
 /// 专注提醒状态
 #[derive(Debug, Clone, Default)]
@@ -42,7 +132,7 @@ impl DistractionState {
     }
 
     pub fn update(&mut self, category: &str, now: i64) -> bool {
-        let is_distraction = category == "entertainment" || category == "social";
+        let is_distraction = category.parse::<Category>().unwrap_or(Category::Uncategorized).is_distraction();
 
         if is_distraction {
             if self.distraction_start.is_none() {
@@ -81,6 +171,7 @@ pub struct MonitorContext {
 }
 
 static MONITOR_CTX: std::sync::OnceLock<Arc<Mutex<MonitorContext>>> = std::sync::OnceLock::new();
+static HOOK_HANDLE: Mutex<Option<isize>> = Mutex::new(None);
 
 pub fn get_distraction_state() -> Option<(i64, bool)> {
     let ctx = MONITOR_CTX.get()?.lock().ok()?;
@@ -140,29 +231,35 @@ fn start_idle_watcher() {
 
                 // 结束当前活动记录
                 if let Some(ref prev) = ctx.current.clone() {
-                    if now > prev.start_time {
+                    if prev.db_id > 0 && now > prev.start_time {
+                        let dur = now - prev.start_time;
                         let db = ctx.db_conn.lock().unwrap();
                         let _ = update_activity_end(&db, prev.db_id, now);
+                        drop(db);
+                        update_cache_after_insert(&prev.category, &prev.app_name, dur);
                     }
                 }
 
                 // 插入 afk 记录
                 let afk_activity = Activity {
                     id: None,
-                    app_name: "afk".to_string(),
+                    app_name: Category::Afk.as_str().to_string(),
                     window_title: "AFK".to_string(),
-                    category: "afk".to_string(),
+                    category: Category::Afk.as_str().to_string(),
                     start_time: now,
-                    end_time: 0,
+                    end_time: None,
                 };
                 let db = ctx.db_conn.lock().unwrap();
-                let afk_id = insert_activity(&db, &afk_activity).unwrap_or(0);
+                let afk_id = insert_ongoing_activity(&db, &afk_activity).unwrap_or_else(|e| {
+                    error!("Failed to insert AFK record: {e}");
+                    -1
+                });
                 drop(db);
 
                 ctx.current = Some(CurrentSession {
                     db_id: afk_id,
-                    app_name: "afk".to_string(),
-                    category: "afk".to_string(),
+                    app_name: Category::Afk.as_str().to_string(),
+                    category: Category::Afk.as_str().to_string(),
                     start_time: now,
                 });
 
@@ -175,7 +272,7 @@ fn start_idle_watcher() {
 
                 // 结束 afk 记录
                 if let Some(ref prev) = ctx.current.clone() {
-                    if prev.app_name == "afk" {
+                    if prev.app_name == Category::Afk.as_str() && prev.db_id > 0 {
                         let db = ctx.db_conn.lock().unwrap();
                         let _ = update_activity_end(&db, prev.db_id, now);
                     }
@@ -185,8 +282,7 @@ fn start_idle_watcher() {
                 was_idle = false;
 
                 let (focus_secs, goal_pct) = {
-                    let db = ctx.db_conn.lock().unwrap();
-                    let f = query_today_focus_secs(&db).unwrap_or(0);
+                    let f = cached_focus_secs();
                     let goal = ctx.daily_goal_secs;
                     let pct = ((f as f32 / goal as f32) * 100.0).min(100.0) as u32;
                     (f, pct)
@@ -194,12 +290,12 @@ fn start_idle_watcher() {
 
                 let _ = ctx.app_handle.emit("activity-changed", OverlayData {
                     current_app: "—".to_string(),
-                    category: "other".to_string(),
+                    category: Category::Other.as_str().to_string(),
                     session_secs: 0,
                     focus_secs,
                     goal_pct,
                     category_secs: 0,
-                    ai_hint: "欢迎回来！".to_string(),
+                    ai_hint: "back".to_string(),
                 });
             }
         }
@@ -212,6 +308,9 @@ pub fn start_monitoring(
     app_handle: AppHandle,
     daily_goal_secs: i64,
 ) {
+    // 初始化今日统计缓存（从 DB 加载）
+    init_daily_cache(&db_conn);
+
     let ctx = MonitorContext {
         db_conn,
         classifier,
@@ -238,7 +337,22 @@ pub fn start_monitoring(
         if hook.0.is_null() {
             error!("Failed to register WinEventHook!");
         } else {
+            if let Ok(mut h) = HOOK_HANDLE.lock() {
+                *h = Some(hook.0 as isize);
+            }
             info!("WinEventHook registered successfully.");
+        }
+    }
+}
+
+/// 注销 WinEventHook，在应用退出时调用
+pub fn cleanup_monitoring() {
+    if let Ok(mut h) = HOOK_HANDLE.lock() {
+        if let Some(ptr) = h.take() {
+            unsafe {
+                let _ = UnhookWinEvent(HWINEVENTHOOK(ptr as *mut _));
+            }
+            info!("WinEventHook unregistered.");
         }
     }
 }
@@ -277,26 +391,35 @@ unsafe extern "system" fn win_event_callback(
         Err(_) => return,
     };
 
+    {
+        let classifier = match ctx.classifier.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if classifier.is_ignored_app(&app_name) {
+            info!("Ignoring app: {}", app_name);
+            return;
+        }
+    }
+
     if let Some(ref prev) = ctx.current.clone() {
         // 用户处于空闲状态时，忽略窗口切换事件（由 idle_watcher 管理）
-        if prev.app_name == "afk" {
+        if prev.app_name == Category::Afk.as_str() {
             return;
         }
         if prev.app_name == app_name {
-            let db = ctx.db_conn.lock().unwrap();
-            let mut focus_secs = query_today_focus_secs(&db).unwrap_or(0);
+            // 同一应用的重复事件：从缓存读取，不访问 DB
             let category = prev.category.clone();
-            let mut cat_secs = crate::db::query_category_secs_today(&db, &category);
-            let past_app_secs = crate::db::query_app_secs_today(&db, &app_name);
-            drop(db);
-            
             let current_dur = now - prev.start_time;
-            let is_focus = category == "dev" || category == "productivity";
+            let is_focus = category.parse::<Category>().unwrap_or(Category::Uncategorized).is_focus();
+
+            let mut focus_secs = cached_focus_secs();
             if is_focus {
                 focus_secs += current_dur;
             }
-            cat_secs += current_dur;
-            
+            let cat_secs = cached_category_secs(&category) + current_dur;
+            let past_app_secs = cached_app_secs(&app_name);
+
             let goal_secs = ctx.daily_goal_secs;
             let goal_pct = ((focus_secs as f32 / goal_secs as f32) * 100.0).min(100.0) as u32;
             let overlay_data = OverlayData {
@@ -306,70 +429,76 @@ unsafe extern "system" fn win_event_callback(
                 focus_secs,
                 goal_pct,
                 category_secs: cat_secs,
-                ai_hint: "专注中...".to_string(),
+                ai_hint: "focusing".to_string(),
             };
             let _ = ctx.app_handle.emit("activity-changed", overlay_data);
             return;
         }
         // 不同应用：结束上一个活动
-        if now > prev.start_time {
+        if prev.db_id > 0 && now > prev.start_time {
             let db = ctx.db_conn.lock().unwrap();
             let _ = update_activity_end(&db, prev.db_id, now);
         }
     }
 
-    let (safe_title, category) = {
+    let (safe_app, safe_title, category) = {
         let classifier = match ctx.classifier.lock() {
             Ok(c) => c,
             Err(_) => return,
         };
-        let safe_title = if classifier.is_sensitive_app(&app_name) {
-            "[protected]".to_string()
-        } else {
-            window_title
-        };
+        let is_sensitive = classifier.is_sensitive_app(&app_name);
         let category = classifier.classify_app(&app_name);
-        (safe_title, category)
+        let safe_app = if is_sensitive { "[protected]".to_string() } else { app_name.clone() };
+        let safe_title = if is_sensitive { "[protected]".to_string() } else { window_title };
+        (safe_app, safe_title, category)
     };
 
     ctx.distraction.update(&category, now);
 
     let new_activity = Activity {
         id: None,
-        app_name: app_name.clone(),
+        app_name: safe_app.clone(),
         window_title: safe_title,
         category: category.clone(),
         start_time: now,
-        end_time: 0,
+        end_time: None,
     };
 
-    // 先在独立块内完成所有 DB 操作并释放锁，避免与 ctx.current 可变借用冲突 (E0502)
-    let (new_id, focus_secs, category_secs, app_secs) = {
+    // 更新缓存：上一个活动的时长（用真实 app_name 保证缓存一致性）
+    if let Some(ref prev) = ctx.current {
+        let prev_dur = now - prev.start_time;
+        if prev_dur > 0 {
+            update_cache_after_insert(&prev.category, &prev.app_name, prev_dur);
+        }
+    }
+
+    // 只做写操作，读取全部走缓存
+    let new_id = {
         let db = ctx.db_conn.lock().unwrap();
-        let id = insert_activity(&db, &new_activity).unwrap_or(0);
-        let secs = query_today_focus_secs(&db).unwrap_or(0);
-        let cat_secs = crate::db::query_category_secs_today(&db, &category);
-        let past_app_secs = crate::db::query_app_secs_today(&db, &app_name);
-        (id, secs, cat_secs, past_app_secs)
-    }; // db (MutexGuard) 在此处 drop，锁释放
+        insert_ongoing_activity(&db, &new_activity).unwrap_or(0)
+    };
+
     ctx.current = Some(CurrentSession {
         db_id: new_id,
-        app_name: app_name.clone(),
+        app_name: safe_app.clone(),
         category: category.clone(),
         start_time: now,
     });
 
+    let focus_secs = cached_focus_secs();
+    let category_secs = cached_category_secs(&category);
+    let app_secs = cached_app_secs(&app_name);
     let goal_secs = ctx.daily_goal_secs;
     let goal_pct = ((focus_secs as f32 / goal_secs as f32) * 100.0).min(100.0) as u32;
 
     let overlay_data = OverlayData {
-        current_app: app_name,
+        current_app: safe_app,
         category,
         session_secs: app_secs,
         focus_secs,
         goal_pct,
         category_secs,
-        ai_hint: "专注中...".to_string(), // 这里可以接入真正的AI提示
+        ai_hint: "focusing".to_string(),
     };
 
     // 通知前端更新
