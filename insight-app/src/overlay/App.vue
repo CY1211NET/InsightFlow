@@ -146,9 +146,7 @@ const moduleConfigs = ref<ModuleConfig[]>([])
 const {
   showPomodoro, pomoPhase, pomoRunning, pomoDoneCount,
   pomoJustDone, pomoDisplay,
-  focusMins, breakMins,
   pomodoroToggle, pomodoroReset, pomodoroSkip,
-  setFocusMins, setBreakMins,
   cleanup: cleanupPomodoro,
   loadPomodoroSettings,
 } = usePomodoro()
@@ -351,16 +349,6 @@ async function onModuleGoalChange(category: string, e: Event) {
 function moduleGoalHours(cat: string): string {
   const secs = moduleGoals.value[cat] ?? 0
   return secs > 0 ? (secs / 3600).toFixed(1) : ''
-}
-
-function onFocusMinsChange(e: Event) {
-  const mins = Number((e.target as HTMLInputElement).value)
-  setFocusMins(mins)
-}
-
-function onBreakMinsChange(e: Event) {
-  const mins = Number((e.target as HTMLInputElement).value)
-  setBreakMins(mins)
 }
 
 async function loadSettings() {

@@ -374,36 +374,28 @@
             <svg class="section-toggle" :class="{ open: !collapsed.pomodoroSettings }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div v-if="!collapsed.pomodoroSettings" class="section-body">
-            <div class="module-goals-list">
-              <div class="module-goal-row">
-                <div class="module-goal-left">
-                  <span class="module-goal-name">{{ t('dashboard.focusDuration') }}</span>
-                  <div class="module-goal-input-wrap">
-                    <input
-                      type="number"
-                      class="module-goal-input"
-                      v-model.number="pomodoroFocusMins"
-                      min="1" max="120" step="1"
-                      @change="savePomodoroSettings"
-                    />
-                    <span class="module-goal-unit">min</span>
-                  </div>
-                </div>
+            <div class="pomo-inline-row">
+              <div class="pomo-inline-group">
+                <span class="pomo-inline-label">{{ t('dashboard.focusDuration') }}</span>
+                <input
+                  type="number"
+                  class="module-goal-input"
+                  v-model.number="pomodoroFocusMins"
+                  min="1" max="120" step="1"
+                  @change="savePomodoroSettings"
+                />
+                <span class="module-goal-unit">min</span>
               </div>
-              <div class="module-goal-row">
-                <div class="module-goal-left">
-                  <span class="module-goal-name">{{ t('dashboard.breakDuration') }}</span>
-                  <div class="module-goal-input-wrap">
-                    <input
-                      type="number"
-                      class="module-goal-input"
-                      v-model.number="pomodoroBreakMins"
-                      min="1" max="30" step="1"
-                      @change="savePomodoroSettings"
-                    />
-                    <span class="module-goal-unit">min</span>
-                  </div>
-                </div>
+              <div class="pomo-inline-group">
+                <span class="pomo-inline-label">{{ t('dashboard.breakDuration') }}</span>
+                <input
+                  type="number"
+                  class="module-goal-input"
+                  v-model.number="pomodoroBreakMins"
+                  min="1" max="30" step="1"
+                  @change="savePomodoroSettings"
+                />
+                <span class="module-goal-unit">min</span>
               </div>
             </div>
           </div>
@@ -1932,6 +1924,23 @@ onMounted(async () => {
   transition: border-color 0.15s;
 }
 .module-goal-input:focus { border-color: var(--surface-15); }
+
+.pomo-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px 10px;
+}
+.pomo-inline-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pomo-inline-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 .module-goal-input::-webkit-inner-spin-button,
 .module-goal-input::-webkit-outer-spin-button { -webkit-appearance: none; }
 .module-goal-input::placeholder { color: var(--text-dim); }
