@@ -1,14 +1,17 @@
 use crate::models::{
     Activity, AppUsage, Category, CategoryAppBreakdown, CategoryStat, DailyFocus, HourlyStat,
-    ModuleGoals, ModuleProgress, WebVisit,
+    ModuleGoals, ModuleProgress, NoteItem, RecurringTodo, TodoItem, WebVisit,
 };
+use chrono::Datelike;
 use log::{error, info, warn};
 use rusqlite::{params, Connection, Result};
 use std::path::Path;
 
 pub fn init_db(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;",
+    )?;
 
     conn.execute_batch(
         "
@@ -33,6 +36,29 @@ pub fn init_db(db_path: &Path) -> Result<Connection> {
             last_visit   INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_web_history_domain ON web_history(domain);
+
+        CREATE TABLE IF NOT EXISTS todos (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            text        TEXT    NOT NULL,
+            done        INTEGER NOT NULL DEFAULT 0,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            source      TEXT    NOT NULL DEFAULT 'manual',
+            group_id    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_todos_done_sort ON todos(done, sort_order);
+
+        CREATE TABLE IF NOT EXISTS notes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            title       TEXT    NOT NULL DEFAULT '',
+            content     TEXT    NOT NULL DEFAULT '',
+            color       TEXT    NOT NULL DEFAULT '#8a8278',
+            pinned      INTEGER NOT NULL DEFAULT 0,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_notes_pinned_updated ON notes(pinned, updated_at);
     ",
     )?;
 
@@ -40,6 +66,34 @@ pub fn init_db(db_path: &Path) -> Result<Connection> {
     let _ = conn.execute_batch(
         "ALTER TABLE web_history ADD COLUMN total_duration INTEGER NOT NULL DEFAULT 0;",
     );
+
+    // 迁移：为 todos 增加 due_date 列（已有则忽略）
+    let _ = conn.execute_batch(
+        "ALTER TABLE todos ADD COLUMN due_date INTEGER;",
+    );
+
+    // 迁移：为 todos 增加 target_date 和 done_date 列
+    let _ = conn.execute_batch(
+        "ALTER TABLE todos ADD COLUMN target_date INTEGER;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE todos ADD COLUMN done_date INTEGER;",
+    );
+
+    // 重复待做规则表
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS recurring_todos (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            text         TEXT    NOT NULL,
+            repeat_type  TEXT    NOT NULL,
+            weekdays     TEXT,
+            start_date   INTEGER,
+            end_date     INTEGER,
+            custom_dates TEXT,
+            created_at   INTEGER NOT NULL,
+            active       INTEGER NOT NULL DEFAULT 1
+        );",
+    )?;
 
     repair_orphan_records(&conn)?;
     migrate_end_time_null(&conn)?;
@@ -144,7 +198,6 @@ pub fn query_today_focus_secs(conn: &Connection) -> Result<i64> {
 
     // 只统计生产力、开发相关的时间作为"专注"时长
     let focus_categories = Category::focus_strs();
-    let now = chrono::Utc::now().timestamp();
 
     let mut total_secs = 0;
     for cat in focus_categories {
@@ -610,6 +663,369 @@ pub fn query_today_web_history(conn: &Connection) -> Result<Vec<WebVisit>> {
     })?;
 
     Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+// ──────────────────────────────────────────────
+// Todos
+// ──────────────────────────────────────────────
+
+fn now_ts() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// 返回今天 00:00:00 本地时间的 Unix 时间戳
+fn today_start_ts() -> i64 {
+    let now = chrono::Local::now();
+    now.date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .timestamp()
+}
+
+pub fn list_todos(conn: &Connection) -> Result<Vec<TodoItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, text, done, sort_order, created_at, updated_at, source, group_id, due_date, target_date, done_date
+         FROM todos
+         ORDER BY done ASC, sort_order ASC, created_at ASC",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        let done_i: i64 = row.get(2)?;
+        Ok(TodoItem {
+            id: Some(row.get(0)?),
+            text: row.get(1)?,
+            done: done_i != 0,
+            sort_order: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            source: row.get(6)?,
+            group_id: row.get(7)?,
+            due_date: row.get(8)?,
+            target_date: row.get(9)?,
+            done_date: row.get(10)?,
+        })
+    })?;
+
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn create_todo(
+    conn: &Connection,
+    text: &str,
+    done: bool,
+    source: &str,
+    group_id: Option<&str>,
+    due_date: Option<i64>,
+    target_date: Option<i64>,
+) -> Result<TodoItem> {
+    let ts = now_ts();
+    let td = target_date.unwrap_or_else(today_start_ts);
+    let next_sort: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM todos",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        + 1;
+
+    conn.execute(
+        "INSERT INTO todos (text, done, sort_order, created_at, updated_at, source, group_id, due_date, target_date)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            text,
+            if done { 1 } else { 0 },
+            next_sort,
+            ts,
+            ts,
+            source,
+            group_id,
+            due_date,
+            td
+        ],
+    )?;
+
+    Ok(TodoItem {
+        id: Some(conn.last_insert_rowid()),
+        text: text.to_string(),
+        done,
+        sort_order: next_sort,
+        created_at: ts,
+        updated_at: ts,
+        source: source.to_string(),
+        group_id: group_id.map(|s| s.to_string()),
+        due_date,
+        target_date: Some(td),
+        done_date: None,
+    })
+}
+
+pub fn set_todo_done(conn: &Connection, id: i64, done: bool) -> Result<()> {
+    let ts = now_ts();
+    let done_date: Option<i64> = if done { Some(today_start_ts()) } else { None };
+    conn.execute(
+        "UPDATE todos SET done = ?1, done_date = ?2, updated_at = ?3 WHERE id = ?4",
+        params![if done { 1 } else { 0 }, done_date, ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_todo_text(conn: &Connection, id: i64, text: &str) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE todos SET text = ?1, updated_at = ?2 WHERE id = ?3",
+        params![text, ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_todo_due_date(conn: &Connection, id: i64, due_date: Option<i64>) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE todos SET due_date = ?1, updated_at = ?2 WHERE id = ?3",
+        params![due_date, ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_todo_target_date(conn: &Connection, id: i64, target_date: Option<i64>) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE todos SET target_date = ?1, updated_at = ?2 WHERE id = ?3",
+        params![target_date, ts, id],
+    )?;
+    Ok(())
+}
+
+/// 未完成任务滚动到今天：把 target_date < 今天且未完成的任务 target_date 更新为今天
+pub fn rollover_todos(conn: &Connection) -> Result<usize> {
+    let today = today_start_ts();
+    let count = conn.execute(
+        "UPDATE todos SET target_date = ?1, updated_at = ?1 WHERE done = 0 AND target_date < ?1",
+        params![today],
+    )?;
+    if count > 0 {
+        info!("Rolled over {count} incomplete todos to today");
+    }
+    Ok(count)
+}
+
+pub fn delete_todo(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM todos WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+pub fn reorder_todos(conn: &Connection, ids_in_order: &[i64]) -> Result<()> {
+    for (i, id) in ids_in_order.iter().enumerate() {
+        conn.execute(
+            "UPDATE todos SET sort_order = ?1 WHERE id = ?2",
+            params![i as i64 + 1, id],
+        )?;
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────
+// Recurring Todos
+// ──────────────────────────────────────────────
+
+pub fn list_recurring_todos(conn: &Connection) -> Result<Vec<RecurringTodo>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, text, repeat_type, weekdays, start_date, end_date, custom_dates, created_at, active
+         FROM recurring_todos ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let active_i: i64 = row.get(8)?;
+        Ok(RecurringTodo {
+            id: Some(row.get(0)?),
+            text: row.get(1)?,
+            repeat_type: row.get(2)?,
+            weekdays: row.get(3)?,
+            start_date: row.get(4)?,
+            end_date: row.get(5)?,
+            custom_dates: row.get(6)?,
+            created_at: row.get(7)?,
+            active: active_i != 0,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn create_recurring_todo(
+    conn: &Connection,
+    text: &str,
+    repeat_type: &str,
+    weekdays: Option<&str>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    custom_dates: Option<&str>,
+) -> Result<RecurringTodo> {
+    let ts = now_ts();
+    conn.execute(
+        "INSERT INTO recurring_todos (text, repeat_type, weekdays, start_date, end_date, custom_dates, created_at, active)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+        params![text, repeat_type, weekdays, start_date, end_date, custom_dates, ts],
+    )?;
+    Ok(RecurringTodo {
+        id: Some(conn.last_insert_rowid()),
+        text: text.to_string(),
+        repeat_type: repeat_type.to_string(),
+        weekdays: weekdays.map(|s| s.to_string()),
+        start_date,
+        end_date,
+        custom_dates: custom_dates.map(|s| s.to_string()),
+        created_at: ts,
+        active: true,
+    })
+}
+
+pub fn delete_recurring_todo(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM recurring_todos WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+pub fn toggle_recurring_todo(conn: &Connection, id: i64, active: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE recurring_todos SET active = ?1 WHERE id = ?2",
+        params![if active { 1 } else { 0 }, id],
+    )?;
+    Ok(())
+}
+
+/// 检查重复规则，为今天命中规则的 recurring todo 自动生成普通 todo 实例
+pub fn generate_recurring_todos(conn: &Connection) -> Result<usize> {
+    let today = today_start_ts();
+    // 获取今天是周几（1=周一 ... 7=周日）
+    let weekday_today = chrono::Local::now().date_naive().weekday().number_from_monday();
+    let today_str = today.to_string();
+
+    let recurring = list_recurring_todos(conn)?;
+    let mut generated = 0usize;
+
+    for rt in recurring.iter().filter(|r| r.active) {
+        let matches = match rt.repeat_type.as_str() {
+            "weekday" => {
+                rt.weekdays
+                    .as_ref()
+                    .map(|w| w.split(',').any(|d| d.trim() == weekday_today.to_string()))
+                    .unwrap_or(false)
+            }
+            "range" => {
+                let start = rt.start_date.unwrap_or(0);
+                let end = rt.end_date.unwrap_or(i64::MAX);
+                today >= start && today <= end
+            }
+            "custom" => {
+                rt.custom_dates
+                    .as_ref()
+                    .map(|d| d.split(',').any(|ts| ts.trim() == today_str))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        };
+
+        if !matches {
+            continue;
+        }
+
+        // 检查今天是否已生成过
+        let group_id = format!("recurring_{}", rt.id.unwrap_or(0));
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM todos WHERE source = 'recurring' AND group_id = ?1 AND target_date = ?2",
+                params![group_id, today],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+
+        if !exists {
+            let _ = create_todo(conn, &rt.text, false, "recurring", Some(&group_id), None, Some(today));
+            generated += 1;
+        }
+    }
+
+    if generated > 0 {
+        info!("Generated {generated} recurring todos for today");
+    }
+    Ok(generated)
+}
+
+// ──────────────────────────────────────────────
+// Notes
+// ──────────────────────────────────────────────
+
+pub fn list_notes(conn: &Connection) -> Result<Vec<NoteItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, content, color, pinned, created_at, updated_at
+         FROM notes
+         ORDER BY pinned DESC, updated_at DESC",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        let pinned_i: i64 = row.get(4)?;
+        Ok(NoteItem {
+            id: Some(row.get(0)?),
+            title: row.get(1)?,
+            content: row.get(2)?,
+            color: row.get(3)?,
+            pinned: pinned_i != 0,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn create_note(conn: &Connection, title: &str, content: &str, color: &str) -> Result<NoteItem> {
+    let ts = now_ts();
+    conn.execute(
+        "INSERT INTO notes (title, content, color, pinned, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+        params![title, content, color, ts, ts],
+    )?;
+
+    Ok(NoteItem {
+        id: Some(conn.last_insert_rowid()),
+        title: title.to_string(),
+        content: content.to_string(),
+        color: color.to_string(),
+        pinned: false,
+        created_at: ts,
+        updated_at: ts,
+    })
+}
+
+pub fn update_note(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    content: &str,
+    color: &str,
+) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE notes SET title = ?1, content = ?2, color = ?3, updated_at = ?4 WHERE id = ?5",
+        params![title, content, color, ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn set_note_pinned(conn: &Connection, id: i64, pinned: bool) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE notes SET pinned = ?1, updated_at = ?2 WHERE id = ?3",
+        params![if pinned { 1 } else { 0 }, ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn delete_note(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+    Ok(())
 }
 
 #[cfg(test)]

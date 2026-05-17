@@ -28,25 +28,25 @@
     <!-- 操作栏 -->
     <div class="row-actions">
       <button class="icon-btn" :title="t('overlay.historyBtn')" :aria-label="t('overlay.historyBtn')" @click="openDashboard">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span style="font-size:13px">📊</span>
       </button>
-      <!-- 番茄钟按钮 -->
       <button class="icon-btn" :class="{ active: showPomodoro }" :title="t('overlay.pomodoro')" :aria-label="t('overlay.pomodoro')" @click="togglePomodoro">
         <span style="font-size:13px">🍅</span>
       </button>
+      <button class="icon-btn" :class="{ active: showTodo }" :title="t('dashboard.todos')" :aria-label="t('dashboard.todos')" @click="toggleTodoList">
+        <span style="font-size:13px">✅</span>
+      </button>
+      <button class="icon-btn" :class="{ active: pinned }" :title="pinned ? t('overlay.unpin') : t('overlay.pin')" :aria-label="t('overlay.pin')" :aria-pressed="pinned" @click.stop="togglePinned">
+        <span style="font-size:13px">📌</span>
+      </button>
       <button class="icon-btn" :class="{ active: clickThrough }" :title="t('overlay.clickThrough') + ' (Ctrl+Shift+I)'" :aria-label="t('overlay.clickThrough')" :aria-pressed="clickThrough" @click="toggleClickThrough">
-        <svg v-if="!clickThrough" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-        <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        <span style="font-size:13px">🔍</span>
       </button>
       <button class="icon-btn" :title="t('overlay.theme')" :aria-label="t('overlay.theme')" @click="toggleTheme">
-        <svg v-if="theme === 'day'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-        <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <span style="font-size:13px">{{ theme === 'day' ? '☀️' : '🌙' }}</span>
       </button>
       <button class="icon-btn" :title="t('overlay.settings')" :aria-label="t('overlay.settings')" @click="toggleSettings">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="1.5" fill="currentColor"/><circle cx="15" cy="12" r="1.5" fill="currentColor"/><circle cx="9" cy="18" r="1.5" fill="currentColor"/></svg>
-      </button>
-      <button class="icon-btn" :aria-label="t('overlay.switchLang')" @click="toggleLocale">
-        <span class="lang-text">{{ locale === 'zh-CN' ? 'EN' : 'CN' }}</span>
+        <span style="font-size:13px">⚙️</span>
       </button>
     </div>
 
@@ -89,6 +89,17 @@
       :pomodoroSkip="pomodoroSkip"
     />
 
+    <!-- 待做清单面板 -->
+    <TodoList
+      :show="showTodo"
+      :todos="activeTodos"
+      :newTodoText="newTodoText"
+      @update:newTodoText="newTodoText = $event"
+      @add="addTodo"
+      @toggle="toggleTodo"
+      @remove="removeTodo"
+    />
+
     <!-- 分心提醒 Toast -->
     <DistractToast
       :show="showDistractAlert"
@@ -103,15 +114,17 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { t, loadLocale, getLocale, setLocale, watchLocale } from '../shared/i18n'
+import { t, loadLocale, watchLocale } from '../shared/i18n'
 import { CATEGORY, isFocus } from '../shared/constants'
 import type { ModuleConfig, ModuleProgress, OverlayData } from './types'
 import { usePomodoro } from './composables/usePomodoro'
 import { useDistraction } from './composables/useDistraction'
+import { useTodo } from './composables/useTodo'
 import SettingsPanel from './SettingsPanel.vue'
 import ModuleProgressPanel from './ModuleProgress.vue'
 import PomodoroTimer from './PomodoroTimer.vue'
 import DistractToast from './DistractToast.vue'
+import TodoList from './TodoList.vue'
 
 // ──────────────────────────────────────────────
 // State
@@ -133,6 +146,7 @@ const showSettings = ref(false)
 const theme = ref<'day' | 'night'>('day')
 const autostartEnabled = ref(false)
 const opacityPct = ref(100)
+const pinned = ref(false)
 let fadeTimer: ReturnType<typeof setTimeout> | null = null
 const unlisteners: (() => void)[] = []
 
@@ -157,16 +171,42 @@ const {
   cleanup: cleanupDistraction,
 } = useDistraction()
 
+const {
+  showTodo, activeTodos, newTodoText,
+  loadTodos, addTodo, toggleTodo, removeTodo,
+} = useTodo()
+
+function closeOtherPanels(except: 'settings' | 'modules' | 'pomodoro' | 'todo') {
+  if (except !== 'settings' && showSettings.value) showSettings.value = false
+  if (except !== 'modules' && showModules.value) { showModules.value = false; expandedModule.value = null }
+  if (except !== 'pomodoro' && showPomodoro.value) showPomodoro.value = false
+  if (except !== 'todo' && showTodo.value) showTodo.value = false
+}
+
 async function togglePomodoro() {
   if (!showPomodoro.value) {
-    if (showSettings.value) showSettings.value = false
-    if (showModules.value) { showModules.value = false; expandedModule.value = null }
+    closeOtherPanels('pomodoro')
     try { await invoke('resize_overlay', { height: COLLAPSED_H + 130 }) } catch {}
     showPomodoro.value = true
   } else {
     showPomodoro.value = false
     setTimeout(async () => {
-      if (!showSettings.value && !showModules.value)
+      if (!showSettings.value && !showModules.value && !showTodo.value)
+        try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
+    }, 200)
+  }
+}
+
+async function toggleTodoList() {
+  if (!showTodo.value) {
+    closeOtherPanels('todo')
+    await loadTodos()
+    try { await invoke('resize_overlay', { height: COLLAPSED_H + 160 }) } catch {}
+    showTodo.value = true
+  } else {
+    showTodo.value = false
+    setTimeout(async () => {
+      if (!showSettings.value && !showModules.value && !showPomodoro.value)
         try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
     }, 200)
   }
@@ -245,6 +285,7 @@ function onEnter() {
 
 function onLeave() {
   isHovered.value = false
+  if (pinned.value) return
   fadeTimer = setTimeout(() => { isFading.value = true }, 3000)
 }
 
@@ -284,18 +325,6 @@ async function openDashboard() {
   } catch (e) {
     console.warn('show_dashboard failed:', e)
   }
-}
-
-// ──────────────────────────────────────────────
-// Locale toggle
-// ──────────────────────────────────────────────
-const locale = getLocale()
-
-async function toggleLocale() {
-  const next = locale.value === 'zh-CN' ? 'en' : 'zh-CN'
-  await setLocale(next)
-  await loadLocale()
-  await refresh()
 }
 
 // ──────────────────────────────────────────────
@@ -364,7 +393,41 @@ async function loadAutostart() {
   try {
     autostartEnabled.value = await invoke<boolean>('get_autostart')
   } catch {
-    console.warn('get_autostart failed, using default')
+    // default false
+  }
+}
+
+async function loadPinned() {
+  try {
+    pinned.value = await invoke<boolean>('get_pinned')
+    if (pinned.value) {
+      if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null }
+      isFading.value = false
+    }
+  } catch (e) {
+    console.warn('get_pinned failed:', e)
+  }
+}
+
+async function togglePinned() {
+  const next = !pinned.value
+  pinned.value = next
+
+  if (next) {
+    if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null }
+    isFading.value = false
+  } else {
+    // 恢复自动淡出逻辑：若当前不在悬停，重新启动计时
+    if (!isHovered.value) {
+      if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null }
+      fadeTimer = setTimeout(() => { isFading.value = true }, 3000)
+    }
+  }
+
+  try {
+    await invoke('set_pinned', { pinned: next })
+  } catch (e) {
+    console.warn('set_pinned failed:', e)
   }
 }
 
@@ -402,8 +465,7 @@ const EXPANDED_MODS_H = 370   // modules panel
 
 async function toggleSettings() {
   if (!showSettings.value) {
-    if (showModules.value) { showModules.value = false; expandedModule.value = null }
-    if (showPomodoro.value) { showPomodoro.value = false }
+    closeOtherPanels('settings')
     await loadModuleConfigs()
     await loadModuleGoals()
     const expandedSetsHeight = 260 + Math.ceil(moduleConfigs.value.length / 2) * 40;
@@ -412,7 +474,7 @@ async function toggleSettings() {
   } else {
     showSettings.value = false
     setTimeout(async () => {
-      if (!showModules.value && !showPomodoro.value)
+      if (!showModules.value && !showPomodoro.value && !showTodo.value)
         try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch (e) { console.warn('resize_overlay failed:', e) }
     }, 200)
   }
@@ -420,8 +482,7 @@ async function toggleSettings() {
 
 async function toggleModules() {
   if (!showModules.value) {
-    if (showSettings.value) { showSettings.value = false }
-    if (showPomodoro.value) { showPomodoro.value = false }
+    closeOtherPanels('modules')
     await loadModuleConfigs()
     await loadModuleProgress()
     try { await invoke('resize_overlay', { height: EXPANDED_MODS_H }) } catch {}
@@ -430,7 +491,7 @@ async function toggleModules() {
     showModules.value = false
     expandedModule.value = null
     setTimeout(async () => {
-      if (!showSettings.value && !showPomodoro.value)
+      if (!showSettings.value && !showPomodoro.value && !showTodo.value)
         try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
     }, 200)
   }
@@ -484,6 +545,7 @@ onMounted(async () => {
   await loadTheme()
   await loadSettings()
   await loadAutostart()
+  await loadPinned()
   await loadModuleConfigs()
   await loadModuleGoals()
   await loadModuleProgress()

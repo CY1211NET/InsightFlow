@@ -81,4 +81,4 @@ npm run tauri build
 *(注意：在多线程开发或首次运行时，底层 SQLite 文件采用 WAL 并发模式。如果由于异常中断导致进程锁死，请任务管理器结束进程后重启即可。)*
 
 ---
-*Stay focused, stay creative. —— InsightFlow Team*
+

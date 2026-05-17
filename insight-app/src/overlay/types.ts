@@ -28,3 +28,17 @@ export interface OverlayData {
   categorySecs: number
   aiHint: string
 }
+
+export interface TodoItem {
+  id: number | null
+  text: string
+  done: boolean
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  source: string
+  groupId: string | null
+  dueDate: number | null
+  targetDate: number | null
+  doneDate: number | null
+}

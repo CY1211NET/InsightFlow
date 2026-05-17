@@ -23,7 +23,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use models::{
     Category, CategoryAppBreakdown, DailyFocus, DashboardData, HourlyStat, ModuleConfig,
-    ModuleGoals, ModuleProgress, OverlayData, WebVisit,
+    ModuleGoals, ModuleProgress, NoteItem, OverlayData, RecurringTodo, TodoImportResult,
+    TodoItem, WebVisit,
 };
 
 #[derive(Debug, Serialize)]
@@ -55,16 +56,17 @@ fn correct_activity_category(
         classifier.add_app_keyword_to_module(&app_name, &new_category);
         classifier.save(&state.config_path);
     }
-    
+
     // 2. Update DB
     {
         let db = state.db_conn.lock().unwrap();
         db.execute(
             "UPDATE activities SET category = ?1 WHERE app_name = ?2",
             rusqlite::params![new_category, app_name],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
@@ -113,14 +115,20 @@ struct WindowState {
     daily_goal_secs: i64,
     #[serde(default)]
     module_goals: ModuleGoals,
+    #[serde(default)]
+    pinned: bool,
     #[serde(default = "default_focus_mins")]
     pomodoro_focus_mins: i32,
     #[serde(default = "default_break_mins")]
     pomodoro_break_mins: i32,
 }
 
-fn default_focus_mins() -> i32 { 25 }
-fn default_break_mins() -> i32 { 5 }
+fn default_focus_mins() -> i32 {
+    25
+}
+fn default_break_mins() -> i32 {
+    5
+}
 
 impl Default for WindowState {
     fn default() -> Self {
@@ -130,6 +138,7 @@ impl Default for WindowState {
             opacity: 1.0,
             daily_goal_secs: 14400,
             module_goals: ModuleGoals::default(),
+            pinned: false,
             pomodoro_focus_mins: 25,
             pomodoro_break_mins: 5,
         }
@@ -282,6 +291,218 @@ fn set_pomodoro_settings(
     Ok(())
 }
 
+// ──────────────────────────────────────────────
+// Todos
+// ──────────────────────────────────────────────
+
+#[tauri::command]
+fn list_todos(state: State<'_, AppState>) -> Result<Vec<TodoItem>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_todos(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_todo(app: tauri::AppHandle, state: State<'_, AppState>, text: String, due_date: Option<i64>, target_date: Option<i64>) -> Result<TodoItem, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Empty todo".to_string());
+    }
+    let db = state.db_conn.lock().unwrap();
+    let item = db::create_todo(&db, &text, false, "manual", None, due_date, target_date).map_err(|e| e.to_string())?;
+    let _ = app.emit("todos-changed", ());
+    Ok(item)
+}
+
+#[tauri::command]
+fn toggle_todo(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, done: bool) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::set_todo_done(&db, id, done).map_err(|e| e.to_string())?;
+    let _ = app.emit("todos-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn update_todo(state: State<'_, AppState>, id: i64, text: String) -> Result<(), String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Empty todo".to_string());
+    }
+    let db = state.db_conn.lock().unwrap();
+    db::update_todo_text(&db, id, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_todo_due_date(state: State<'_, AppState>, id: i64, due_date: Option<i64>) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::update_todo_due_date(&db, id, due_date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_todo_target_date(state: State<'_, AppState>, id: i64, target_date: Option<i64>) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::update_todo_target_date(&db, id, target_date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_todo(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::delete_todo(&db, id).map_err(|e| e.to_string())?;
+    let _ = app.emit("todos-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn reorder_todos(state: State<'_, AppState>, ids_in_order: Vec<i64>) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::reorder_todos(&db, &ids_in_order).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rollover_todos(state: State<'_, AppState>) -> Result<usize, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::rollover_todos(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn generate_recurring(state: State<'_, AppState>) -> Result<usize, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::generate_recurring_todos(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_recurring_todos(state: State<'_, AppState>) -> Result<Vec<RecurringTodo>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_recurring_todos(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_recurring_todo(
+    state: State<'_, AppState>,
+    text: String,
+    repeat_type: String,
+    weekdays: Option<String>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    custom_dates: Option<String>,
+) -> Result<RecurringTodo, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Empty recurring todo".to_string());
+    }
+    let db = state.db_conn.lock().unwrap();
+    db::create_recurring_todo(
+        &db,
+        &text,
+        &repeat_type,
+        weekdays.as_deref(),
+        start_date,
+        end_date,
+        custom_dates.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_recurring_todo(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::delete_recurring_todo(&db, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn toggle_recurring_todo(state: State<'_, AppState>, id: i64, active: bool) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::toggle_recurring_todo(&db, id, active).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_todos_markdown(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    markdown: String,
+) -> Result<TodoImportResult, String> {
+    let mut imported = 0usize;
+    let mut ignored = 0usize;
+
+    let group_id = chrono::Utc::now().timestamp_millis().to_string();
+    let re = regex::Regex::new(r"^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$").map_err(|e| e.to_string())?;
+
+    let db = state.db_conn.lock().unwrap();
+    for line in markdown.lines() {
+        let Some(cap) = re.captures(line) else {
+            ignored += 1;
+            continue;
+        };
+        let done_mark = cap.get(1).map(|m| m.as_str()).unwrap_or(" ");
+        let text = cap.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+        if text.is_empty() {
+            ignored += 1;
+            continue;
+        }
+        let done = done_mark.eq_ignore_ascii_case("x");
+        let _ = db::create_todo(&db, text, done, "markdown", Some(&group_id), None, None);
+        imported += 1;
+    }
+
+    let _ = app.emit("todos-changed", ());
+    Ok(TodoImportResult { imported, ignored })
+}
+
+// ──────────────────────────────────────────────
+// Notes
+// ──────────────────────────────────────────────
+
+#[tauri::command]
+fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteItem>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_notes(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_note(
+    state: State<'_, AppState>,
+    title: String,
+    content: String,
+    color: String,
+) -> Result<NoteItem, String> {
+    let db = state.db_conn.lock().unwrap();
+    let color = if color.trim().is_empty() {
+        "#8a8278".to_string()
+    } else {
+        color
+    };
+    db::create_note(&db, title.trim(), content.as_str(), color.as_str()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_note(
+    state: State<'_, AppState>,
+    id: i64,
+    title: String,
+    content: String,
+    color: String,
+) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    let color = if color.trim().is_empty() {
+        "#8a8278".to_string()
+    } else {
+        color
+    };
+    db::update_note(&db, id, title.trim(), content.as_str(), color.as_str())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn pin_note(state: State<'_, AppState>, id: i64, pinned: bool) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::set_note_pinned(&db, id, pinned).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_note(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::delete_note(&db, id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn save_window_position(state: State<'_, AppState>, x: i32, y: i32) -> Result<(), String> {
     let mut ws = state.window_state.lock().unwrap();
@@ -314,6 +535,20 @@ fn set_opacity(
             set_window_opacity(HWND(hwnd.0 as _), opacity);
         }
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_pinned(state: State<'_, AppState>) -> Result<bool, String> {
+    let ws = state.window_state.lock().unwrap();
+    Ok(ws.pinned)
+}
+
+#[tauri::command]
+fn set_pinned(state: State<'_, AppState>, pinned: bool) -> Result<(), String> {
+    let mut ws = state.window_state.lock().unwrap();
+    ws.pinned = pinned;
+    save_window_state(&state.data_dir, &ws);
     Ok(())
 }
 
@@ -412,7 +647,11 @@ fn get_locale(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn set_locale(app: tauri::AppHandle, state: State<'_, AppState>, locale: String) -> Result<(), String> {
+fn set_locale(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    locale: String,
+) -> Result<(), String> {
     if locale != "zh-CN" && locale != "en" {
         return Err(format!("Unsupported locale: {locale}"));
     }
@@ -436,7 +675,11 @@ fn get_theme(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn set_theme(app: tauri::AppHandle, state: State<'_, AppState>, theme: String) -> Result<(), String> {
+fn set_theme(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    theme: String,
+) -> Result<(), String> {
     if theme != "day" && theme != "night" {
         return Err(format!("Unsupported theme: {theme}"));
     }
@@ -593,6 +836,8 @@ fn main() {
             save_window_position,
             get_opacity,
             set_opacity,
+            get_pinned,
+            set_pinned,
             get_daily_goal,
             set_daily_goal,
             get_module_goals,
@@ -607,7 +852,27 @@ fn main() {
             correct_activity_category,
             clear_data,
             get_pomodoro_settings,
-            set_pomodoro_settings
+            set_pomodoro_settings,
+            list_todos,
+            add_todo,
+            toggle_todo,
+            update_todo,
+            delete_todo,
+            reorder_todos,
+            import_todos_markdown,
+            set_todo_due_date,
+            set_todo_target_date,
+            rollover_todos,
+            generate_recurring,
+            list_recurring_todos,
+            add_recurring_todo,
+            delete_recurring_todo,
+            toggle_recurring_todo,
+            list_notes,
+            create_note,
+            update_note,
+            pin_note,
+            delete_note
         ])
         .setup(move |app| {
             setup_tray(app)?;

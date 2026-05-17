@@ -81,4 +81,4 @@ npm run tauri build
 *(Note: During multi-threaded development or initial runs, the underlying SQLite database uses WAL concurrency mode. If a process crash causes a database lock, simply terminate the process in Task Manager and restart.)*
 
 ---
-*Stay focused, stay creative. —— InsightFlow Team*
+

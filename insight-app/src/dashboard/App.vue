@@ -51,9 +51,9 @@
         @click="setDateRange(tab.key as DateRange)"
       >{{ tab.label }}</button>
       <div class="custom-range" :class="{ active: dateRange === 'custom' }">
-        <input type="date" class="date-input" v-model="customStart" @change="dateRange = 'custom'; setDateRange('custom')" />
+        <DatePicker v-model="customStart" @change="dateRange = 'custom'; setDateRange('custom')" />
         <span class="range-sep">~</span>
-        <input type="date" class="date-input" v-model="customEnd" @change="dateRange = 'custom'; setDateRange('custom')" />
+        <DatePicker v-model="customEnd" @change="dateRange = 'custom'; setDateRange('custom')" />
       </div>
       <button class="date-tab compare-btn" :class="{ active: compareMode }" @click="toggleCompare()">
         {{ t('dashboard.compare') }}
@@ -63,9 +63,9 @@
     <!-- Compare date picker -->
     <div v-if="compareMode" class="compare-bar">
       <span class="compare-label">{{ t('dashboard.vs') }}:</span>
-      <input type="date" class="date-input" v-model="compareStart" @change="loadCompareData()" />
+      <DatePicker v-model="compareStart" @change="loadCompareData()" />
       <span class="range-sep">~</span>
-      <input type="date" class="date-input" v-model="compareEnd" @change="loadCompareData()" />
+      <DatePicker v-model="compareEnd" @change="loadCompareData()" />
     </div>
 
 
@@ -200,6 +200,181 @@
                   {{ mod.goalPct }}%
                 </span>
                 <span class="module-goal-pct dim" v-else>--</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Todos -->
+        <section class="section" v-else-if="secName === 'todos'">
+          <div class="section-header" @click="toggleSection('todos')">
+            <h2 class="section-title drag-handle">{{ t('dashboard.todos') }}</h2>
+            <svg class="section-toggle" :class="{ open: !collapsed.todos }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div v-if="!collapsed.todos" class="section-body">
+            <!-- Tab 栏 -->
+            <div class="todo-date-tabs">
+              <button class="todo-date-tab" :class="{ active: todoTab === 'pending' }" @click="todoTab = 'pending'">{{ t('dashboard.todoPending') }}</button>
+              <button class="todo-date-tab" :class="{ active: todoTab === 'overdue' }" @click="todoTab = 'overdue'">{{ t('dashboard.todoOverdue') }}</button>
+              <button class="todo-date-tab" :class="{ active: todoTab === 'completed' }" @click="todoTab = 'completed'">{{ t('dashboard.todoCompleted') }}</button>
+              <button class="todo-date-tab" :class="{ active: todoTab === 'recurring' }" @click="todoTab = 'recurring'">{{ t('dashboard.recurring') }}</button>
+              <button class="todo-date-tab" :class="{ active: todoTab === 'import' }" @click="todoTab = 'import'">{{ t('dashboard.importMarkdown') }}</button>
+            </div>
+
+            <!-- Add todo (非重复项目/导入 tab) -->
+            <div v-if="todoTab !== 'recurring' && todoTab !== 'import'" class="todo-add">
+              <input
+                class="todo-input"
+                v-model="newTodoText"
+                :placeholder="t('dashboard.todoPlaceholder')"
+                @keydown.enter="addTodo"
+              />
+              <DatePicker 
+                v-model="newTodoDueDate" 
+                :min="todayIsoString"
+                :title="t('dashboard.addDate') || '选择日期'"
+                clearable
+              />
+              <button class="mini-btn primary" @click="addTodo">{{ t('dashboard.add') }}</button>
+            </div>
+
+            <!-- 待完成 Tab -->
+            <div v-if="todoTab === 'pending'" class="todo-section">
+              <div class="todo-list">
+                <div v-if="todoPending.length === 0" class="empty-hint">{{ t('dashboard.noTodos') }}</div>
+                <div v-for="todo in todoPending" :key="String(todo.id)" class="todo-row">
+                  <input type="checkbox" :checked="todo.done" @change="toggleTodo(todo, ($event.target as HTMLInputElement).checked)" />
+                  <input class="todo-text" :value="todo.text" @change="updateTodo(todo, ($event.target as HTMLInputElement).value)" />
+                  <DatePicker :modelValue="tsToDateInput(todo.targetDate)" @change="setTodoTargetDate(todo, $event)" />
+                  <button class="mini-btn danger" @click="deleteTodo(todo)">✕</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 未完成 Tab -->
+            <div v-if="todoTab === 'overdue'" class="todo-section">
+              <div class="todo-list">
+                <div v-if="todoOverdue.length === 0" class="empty-hint">{{ t('dashboard.noTodos') }}</div>
+                <div v-for="todo in todoOverdue" :key="String(todo.id)" class="todo-row overdue">
+                  <input type="checkbox" :checked="todo.done" @change="toggleTodo(todo, ($event.target as HTMLInputElement).checked)" />
+                  <input class="todo-text" :value="todo.text" @change="updateTodo(todo, ($event.target as HTMLInputElement).value)" />
+                  <DatePicker :modelValue="tsToDateInput(todo.targetDate)" @change="setTodoTargetDate(todo, $event)" />
+                  <button class="mini-btn danger" @click="deleteTodo(todo)">✕</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 已完成 Tab -->
+            <div v-if="todoTab === 'completed'" class="todo-section">
+              <div class="todo-list">
+                <div v-if="todoCompleted.length === 0" class="empty-hint">{{ t('dashboard.noTodos') }}</div>
+                <div v-for="todo in todoCompleted" :key="String(todo.id)" class="todo-row done">
+                  <input type="checkbox" :checked="todo.done" @change="toggleTodo(todo, ($event.target as HTMLInputElement).checked)" />
+                  <input class="todo-text" :value="todo.text" @change="updateTodo(todo, ($event.target as HTMLInputElement).value)" />
+                  <span class="todo-time-tag">{{ formatDoneDate(todo.doneDate) }}</span>
+                  <button class="mini-btn danger" @click="deleteTodo(todo)">✕</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 重复项目 Tab -->
+            <div v-if="todoTab === 'recurring'" class="todo-section">
+              <!-- 新建重复项目 -->
+              <div class="recurring-create">
+                <div class="recurring-create-row">
+                  <input class="todo-input" v-model="newRecurringText" :placeholder="t('dashboard.recurringNew')" @keydown.enter="addRecurringTodo" />
+                  <select class="recurring-select" v-model="newRecurringType">
+                    <option value="weekday">{{ t('dashboard.repeatWeekday') }}</option>
+                    <option value="range">{{ t('dashboard.repeatRange') }}</option>
+                    <option value="custom">{{ t('dashboard.repeatCustom') }}</option>
+                  </select>
+                  <button class="mini-btn primary" @click="addRecurringTodo">{{ t('dashboard.add') }}</button>
+                </div>
+                <!-- weekday 配置 -->
+                <div v-if="newRecurringType === 'weekday'" class="recurring-weekdays">
+                  <label v-for="(d, i) in weekdayLabels" :key="i" class="weekday-check">
+                    <input type="checkbox" :value="i + 1" v-model="newRecurringWeekdays" />
+                    <span>{{ d }}</span>
+                  </label>
+                </div>
+                <!-- range 配置 -->
+                <div v-if="newRecurringType === 'range'" class="recurring-range">
+                  <DatePicker v-model="newRecurringStart" />
+                  <span>~</span>
+                  <DatePicker v-model="newRecurringEnd" />
+                </div>
+                <!-- custom 配置 -->
+                <div v-if="newRecurringType === 'custom'" class="recurring-custom">
+                  <DatePicker v-model="newRecurringCustomDate" />
+                  <button class="mini-btn" @click="addCustomDate">{{ t('dashboard.addDate') }}</button>
+                  <div class="custom-dates-list">
+                    <span v-for="(d, i) in newRecurringCustomDates" :key="i" class="custom-date-tag">
+                      {{ formatCustomDate(d) }}
+                      <button class="tag-remove" @click="newRecurringCustomDates.splice(i, 1)">✕</button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 重复项目列表 -->
+              <div class="todo-list">
+                <div v-if="recurringTodos.length === 0" class="empty-hint">{{ t('dashboard.noRecurring') }}</div>
+                <div v-for="rt in recurringTodos" :key="String(rt.id)" class="todo-row recurring-row">
+                  <span class="todo-text readonly">{{ rt.text }}</span>
+                  <span class="recurring-type-tag">{{ recurringTypeLabel(rt.repeatType) }}</span>
+                  <span class="recurring-detail">{{ recurringDetail(rt) }}</span>
+                  <button class="mini-btn" :class="{ danger: rt.active }" @click="toggleRecurringTodo(rt)">
+                    {{ rt.active ? 'ON' : 'OFF' }}
+                  </button>
+                  <button class="mini-btn danger" @click="deleteRecurringTodo(rt)">✕</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 导入 Markdown Tab -->
+            <div v-if="todoTab === 'import'" class="todo-import">
+              <textarea
+                class="todo-md"
+                v-model="todoMarkdown"
+                :placeholder="t('dashboard.todoMarkdownHint')"
+              />
+              <div class="todo-import-row">
+                <button class="mini-btn" @click="importTodosMarkdown">{{ t('dashboard.importMarkdown') }}</button>
+                <span class="todo-import-msg" v-if="todoImportMsg">{{ todoImportMsg }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Notes -->
+        <section class="section" v-else-if="secName === 'notes'">
+          <div class="section-header" @click="toggleSection('notes')">
+            <h2 class="section-title drag-handle">{{ t('dashboard.notes') }}</h2>
+            <svg class="section-toggle" :class="{ open: !collapsed.notes }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div v-if="!collapsed.notes" class="section-body">
+            <div class="note-create">
+              <input class="note-title-input" v-model="newNoteTitle" :placeholder="t('dashboard.noteTitle')" />
+              <input class="note-color" type="color" v-model="newNoteColor" />
+              <button class="mini-btn primary" @click="createNote">{{ t('dashboard.create') }}</button>
+            </div>
+            <textarea class="note-content-input" v-model="newNoteContent" :placeholder="t('dashboard.noteContent')" />
+
+            <div class="note-list">
+              <div v-if="notes.length === 0" class="empty-hint">{{ t('dashboard.noNotes') }}</div>
+              <div v-for="note in notes" :key="String(note.id)" class="note-card" :style="{ borderColor: note.color }">
+                <div class="note-card-head">
+                  <input class="note-title" v-model="note.title" @change="saveNote(note)" />
+                  <div class="note-actions">
+                    <input class="note-color" type="color" v-model="note.color" @change="saveNote(note)" />
+                    <label class="note-pin">
+                      <input type="checkbox" :checked="note.pinned" @change="pinNote(note, ($event.target as HTMLInputElement).checked)" />
+                      <span>{{ t('dashboard.pin') }}</span>
+                    </label>
+                    <button class="mini-btn danger" @click="deleteNote(note)">✕</button>
+                  </div>
+                </div>
+                <textarea class="note-content" v-model="note.content" @change="saveNote(note)" />
               </div>
             </div>
           </div>
@@ -452,6 +627,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { t, loadLocale, getLocale, setLocale, watchLocale } from '../shared/i18n'
 import { CATEGORY, isFocus } from '../shared/constants'
+import DatePicker from './components/DatePicker.vue'
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -526,6 +702,47 @@ interface HourlyStat {
   totalSecs: number
 }
 
+interface TodoItem {
+  id: number | null
+  text: string
+  done: boolean
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  source: string
+  groupId: string | null
+  dueDate: number | null
+  targetDate: number | null
+  doneDate: number | null
+}
+
+interface TodoImportResult {
+  imported: number
+  ignored: number
+}
+
+interface RecurringTodo {
+  id: number | null
+  text: string
+  repeatType: string
+  weekdays: string | null
+  startDate: number | null
+  endDate: number | null
+  customDates: string | null
+  createdAt: number
+  active: boolean
+}
+
+interface NoteItem {
+  id: number | null
+  title: string
+  content: string
+  color: string
+  pinned: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 // ── Existing reactive state ───────────────────────────────────────────────────
 
 const data = ref<DashboardData>({
@@ -542,7 +759,7 @@ const categoryApps = ref<CategoryAppBreakdown[]>([])
 const expandedCategory = ref<string | null>(null)
 
 
-type CollapsibleSection = 'moduleManager' | 'activities' | 'webHistory' | 'dataManagement' | 'hourlyDist' | 'pomodoroSettings'
+type CollapsibleSection = 'moduleManager' | 'activities' | 'webHistory' | 'dataManagement' | 'hourlyDist' | 'pomodoroSettings' | 'todos' | 'notes'
 const collapsed = ref<Record<CollapsibleSection, boolean>>({
   moduleManager: true,
   activities: true,
@@ -550,6 +767,8 @@ const collapsed = ref<Record<CollapsibleSection, boolean>>({
   dataManagement: true,
   hourlyDist: true,
   pomodoroSettings: true,
+  todos: true,
+  notes: true,
 })
 
 // ── New reactive state ────────────────────────────────────────────────────────
@@ -566,6 +785,51 @@ const hourlyData = ref<HourlyStat[]>([])
 const activitySearch = ref('')
 const activityCategoryFilter = ref<string | null>(null)
 
+// Todos & Notes
+const todos = ref<TodoItem[]>([])
+const newTodoText = ref('')
+const newTodoDueDate = ref('')
+const todoMarkdown = ref('')
+const todoImportMsg = ref('')
+const todoTab = ref<'pending' | 'overdue' | 'completed' | 'recurring' | 'import'>('pending')
+
+// Recurring
+const recurringTodos = ref<RecurringTodo[]>([])
+const newRecurringText = ref('')
+const newRecurringType = ref<'weekday' | 'range' | 'custom'>('weekday')
+const newRecurringWeekdays = ref<number[]>([])
+const newRecurringStart = ref('')
+const newRecurringEnd = ref('')
+const newRecurringCustomDate = ref('')
+const newRecurringCustomDates = ref<string[]>([])
+const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日']
+
+const todayStartTs = computed(() => {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return Math.floor(d.getTime() / 1000)
+})
+
+const todoPending = computed(() =>
+  todos.value.filter(t => !t.done && t.targetDate === todayStartTs.value)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+)
+
+const todoOverdue = computed(() =>
+  todos.value.filter(t => !t.done && t.targetDate !== null && t.targetDate > todayStartTs.value)
+    .sort((a, b) => (a.targetDate ?? 0) - (b.targetDate ?? 0))
+)
+
+const todoCompleted = computed(() =>
+  todos.value.filter(t => t.done)
+    .sort((a, b) => (b.doneDate ?? 0) - (a.doneDate ?? 0))
+)
+
+const notes = ref<NoteItem[]>([])
+const newNoteTitle = ref('')
+const newNoteContent = ref('')
+const newNoteColor = ref('#8a8278')
+
 // Compare mode
 const compareMode = ref(false)
 const compareStart = ref('')
@@ -580,6 +844,8 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
 const layoutOrder = ref([
   'appUsage',
   'moduleGoals',
+  'todos',
+  'notes',
   'hourlyDist',
   'pomodoroSettings',
   'moduleManager',
@@ -647,10 +913,36 @@ const todayStr = computed(() => {
   })
 })
 
+const todayIsoString = computed(() => {
+  const d = new Date()
+  return d.toISOString().split('T')[0]
+})
+
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
+
+function checkAndExpandWindow() {
+  setTimeout(async () => {
+    try {
+      const win = getCurrentWindow()
+      const factor = await win.scaleFactor()
+      const size = await win.innerSize()
+      const logicalHeight = size.height / factor
+      
+      const requiredWidth = document.documentElement.scrollWidth
+      if (requiredWidth > window.innerWidth) {
+        await win.setSize(new LogicalSize(requiredWidth + 40, logicalHeight))
+      }
+    } catch (e) {
+      console.warn('Auto-resize failed', e)
+    }
+  }, 100)
+}
+
 async function toggleLocale() {
   const next = locale.value === 'zh-CN' ? 'en' : 'zh-CN'
   await setLocale(next)
   await load()
+  checkAndExpandWindow()
 }
 
 // ── Computed: focus seconds ───────────────────────────────────────────────────
@@ -887,16 +1179,16 @@ async function savePomodoroSettings() {
 
 async function correctCategory(act: { appName: string, category: string }, newCategory: string) {
   if (act.category === newCategory) return
-  
+
   try {
     await invoke('correct_activity_category', {
       appName: act.appName,
       newCategory
     })
-    
+
     // Optimistic UI update
     act.category = newCategory
-    
+
     // Reload full data in background to refresh charts
     setTimeout(() => {
       load()
@@ -987,6 +1279,256 @@ function handleClearData() {
   }).catch(e => {
     console.warn('clear_data failed:', e)
   })
+}
+
+async function loadTodos() {
+  try {
+    await invoke('rollover_todos')
+    await invoke('generate_recurring')
+    todos.value = await invoke<TodoItem[]>('list_todos')
+  } catch (e) {
+    console.warn('list_todos failed:', e)
+  }
+}
+
+async function addTodo() {
+  const text = newTodoText.value.trim()
+  if (!text) return
+  // If user picks a date, we use it as targetDate, otherwise null (Rust will default to today)
+  const targetDate = newTodoDueDate.value ? Math.floor(new Date(newTodoDueDate.value + 'T00:00:00').getTime() / 1000) : null
+  try {
+    await invoke<TodoItem>('add_todo', { text, dueDate: null, targetDate })
+    newTodoText.value = ''
+    newTodoDueDate.value = ''
+    await loadTodos()
+  } catch (e) {
+    console.warn('add_todo failed:', e)
+  }
+}
+
+async function toggleTodo(todo: TodoItem, done: boolean) {
+  if (!todo.id) return
+  try {
+    await invoke('toggle_todo', { id: todo.id, done })
+    await loadTodos()
+  } catch (e) {
+    console.warn('toggle_todo failed:', e)
+  }
+}
+
+async function updateTodo(todo: TodoItem, text: string) {
+  if (!todo.id) return
+  const trimmed = text.trim()
+  if (!trimmed) return
+  try {
+    await invoke('update_todo', { id: todo.id, text: trimmed })
+    await loadTodos()
+  } catch (e) {
+    console.warn('update_todo failed:', e)
+  }
+}
+
+async function deleteTodo(todo: TodoItem) {
+  if (!todo.id) return
+  try {
+    await invoke('delete_todo', { id: todo.id })
+    await loadTodos()
+  } catch (e) {
+    console.warn('delete_todo failed:', e)
+  }
+}
+
+function tsToDateInput(ts: number | null): string {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+async function setTodoTargetDate(todo: TodoItem, dateStr: string) {
+  if (!todo.id) return
+  const targetDate = dateStr ? Math.floor(new Date(dateStr + 'T00:00:00').getTime() / 1000) : null
+  try {
+    await invoke('set_todo_target_date', { id: todo.id, targetDate })
+    await loadTodos()
+  } catch (e) {
+    console.warn('set_todo_target_date failed:', e)
+  }
+}
+
+async function importTodosMarkdown() {
+  const md = todoMarkdown.value
+  if (!md.trim()) return
+  try {
+    const res = await invoke<TodoImportResult>('import_todos_markdown', { markdown: md })
+    todoImportMsg.value = `${res.imported} imported, ${res.ignored} ignored`
+    todoMarkdown.value = ''
+    await loadTodos()
+  } catch (e) {
+    console.warn('import_todos_markdown failed:', e)
+  }
+}
+
+// ── Recurring Todos ──
+
+async function loadRecurringTodos() {
+  try {
+    recurringTodos.value = await invoke<RecurringTodo[]>('list_recurring_todos')
+  } catch (e) {
+    console.warn('list_recurring_todos failed:', e)
+  }
+}
+
+async function addRecurringTodo() {
+  const text = newRecurringText.value.trim()
+  if (!text) return
+  try {
+    const params: any = { text, repeatType: newRecurringType.value }
+    if (newRecurringType.value === 'weekday') {
+      if (newRecurringWeekdays.value.length === 0) return
+      params.weekdays = newRecurringWeekdays.value.sort().join(',')
+    } else if (newRecurringType.value === 'range') {
+      if (!newRecurringStart.value || !newRecurringEnd.value) return
+      params.startDate = Math.floor(new Date(newRecurringStart.value + 'T00:00:00').getTime() / 1000)
+      params.endDate = Math.floor(new Date(newRecurringEnd.value + 'T00:00:00').getTime() / 1000)
+    } else if (newRecurringType.value === 'custom') {
+      if (newRecurringCustomDates.value.length === 0) return
+      params.customDates = newRecurringCustomDates.value
+        .map(d => Math.floor(new Date(d + 'T00:00:00').getTime() / 1000))
+        .join(',')
+    }
+    await invoke('add_recurring_todo', params)
+    newRecurringText.value = ''
+    newRecurringWeekdays.value = []
+    newRecurringStart.value = ''
+    newRecurringEnd.value = ''
+    newRecurringCustomDates.value = []
+    await loadRecurringTodos()
+  } catch (e) {
+    console.warn('add_recurring_todo failed:', e)
+  }
+}
+
+async function deleteRecurringTodo(rt: RecurringTodo) {
+  if (!rt.id) return
+  try {
+    await invoke('delete_recurring_todo', { id: rt.id })
+    await loadRecurringTodos()
+  } catch (e) {
+    console.warn('delete_recurring_todo failed:', e)
+  }
+}
+
+async function toggleRecurringTodo(rt: RecurringTodo) {
+  if (!rt.id) return
+  try {
+    await invoke('toggle_recurring_todo', { id: rt.id, active: !rt.active })
+    await loadRecurringTodos()
+  } catch (e) {
+    console.warn('toggle_recurring_todo failed:', e)
+  }
+}
+
+function addCustomDate() {
+  const d = newRecurringCustomDate.value
+  if (!d || newRecurringCustomDates.value.includes(d)) return
+  newRecurringCustomDates.value.push(d)
+  newRecurringCustomDate.value = ''
+}
+
+function recurringTypeLabel(type: string): string {
+  if (type === 'weekday') return t('dashboard.repeatWeekday')
+  if (type === 'range') return t('dashboard.repeatRange')
+  if (type === 'custom') return t('dashboard.repeatCustom')
+  return type
+}
+
+function recurringDetail(rt: RecurringTodo): string {
+  if (rt.repeatType === 'weekday' && rt.weekdays) {
+    return rt.weekdays.split(',').map(d => weekdayLabels[parseInt(d.trim()) - 1] || d).join(' ')
+  }
+  if (rt.repeatType === 'range' && rt.startDate && rt.endDate) {
+    return `${formatShortDate(rt.startDate)} ~ ${formatShortDate(rt.endDate)}`
+  }
+  if (rt.repeatType === 'custom' && rt.customDates) {
+    return rt.customDates.split(',').length + ' dates'
+  }
+  return ''
+}
+
+function formatCustomDate(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function formatShortDate(ts: number): string {
+  const d = new Date(ts * 1000)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function formatDoneDate(ts: number | null): string {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+async function loadNotes() {
+  try {
+    notes.value = await invoke<NoteItem[]>('list_notes')
+  } catch (e) {
+    console.warn('list_notes failed:', e)
+  }
+}
+
+async function createNote() {
+  try {
+    const note = await invoke<NoteItem>('create_note', {
+      title: newNoteTitle.value,
+      content: newNoteContent.value,
+      color: newNoteColor.value,
+    })
+    newNoteTitle.value = ''
+    newNoteContent.value = ''
+    newNoteColor.value = '#8a8278'
+    // put new note at top optimistically
+    notes.value = [note, ...notes.value]
+  } catch (e) {
+    console.warn('create_note failed:', e)
+  }
+}
+
+async function saveNote(note: NoteItem) {
+  if (!note.id) return
+  try {
+    await invoke('update_note', {
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      color: note.color,
+    })
+    await loadNotes()
+  } catch (e) {
+    console.warn('update_note failed:', e)
+  }
+}
+
+async function pinNote(note: NoteItem, pinned: boolean) {
+  if (!note.id) return
+  try {
+    await invoke('pin_note', { id: note.id, pinned })
+    await loadNotes()
+  } catch (e) {
+    console.warn('pin_note failed:', e)
+  }
+}
+
+async function deleteNote(note: NoteItem) {
+  if (!note.id) return
+  try {
+    await invoke('delete_note', { id: note.id })
+    await loadNotes()
+  } catch (e) {
+    console.warn('delete_note failed:', e)
+  }
 }
 
 async function loadCategoryApps() {
@@ -1147,13 +1689,18 @@ onMounted(async () => {
     }
   })
 
+  listen('todos-changed', () => {
+    loadTodos()
+    loadRecurringTodos()
+  })
+
   const savedOrder = localStorage.getItem('dashboard-layout-order')
   if (savedOrder) {
-    try { 
+    try {
       const parsed = JSON.parse(savedOrder)
       if (Array.isArray(parsed)) {
         const defaultOrder = [
-          'appUsage', 'moduleGoals', 'hourlyDist', 'pomodoroSettings', 
+          'appUsage', 'moduleGoals', 'todos', 'notes', 'hourlyDist', 'pomodoroSettings',
           'moduleManager', 'weeklyTrend', 'activities', 'webHistory', 'dataManagement'
         ]
         for (const item of defaultOrder) {
@@ -1174,6 +1721,9 @@ onMounted(async () => {
     loadPomodoroSettings(),
     loadModuleGoals(),
     loadModuleConfigs(),
+    loadTodos(),
+    loadRecurringTodos(),
+    loadNotes(),
     loadCategoryApps(),
     loadHourlyData(),
   ])
@@ -1299,6 +1849,8 @@ onMounted(async () => {
   cursor: pointer;
   transition: all 0.15s ease;
   font-family: 'Outfit', sans-serif;
+  white-space: nowrap;
+  min-width: max-content;
 }
 
 .date-tab:hover {
@@ -1834,6 +2386,379 @@ onMounted(async () => {
   color: #d4726a;
 }
 
+/* ── Todos ── */
+.todo-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.todo-input {
+  flex: 1;
+  height: 28px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  color: #d4cdc5;
+  font-size: 12px;
+  padding: 0 10px;
+  outline: none;
+}
+
+.todo-import {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todo-md {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  color: #d4cdc5;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 10px;
+  outline: none;
+}
+
+.todo-import-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.todo-import-msg {
+  font-size: 11px;
+  color: #5a544e;
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--surface-02);
+  border: 1px solid var(--surface-04);
+}
+
+.todo-row input[type="checkbox"] {
+  accent-color: #c47a5a;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.todo-row.done {
+  opacity: 0.6;
+}
+
+.todo-text {
+  flex: 1;
+  height: 26px;
+  background: transparent;
+  border: 1px solid var(--surface-05);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 0 8px;
+  outline: none;
+}
+
+.todo-row.done .todo-text {
+  text-decoration: line-through;
+  color: #9e958c;
+}
+
+.todo-date-input {
+  width: 110px;
+  flex-shrink: 0;
+  /* inherits radius, font, colors, padding, and height from .date-input */
+}
+
+.todo-time-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-weight: 500;
+  background: var(--surface-06);
+  color: var(--text-muted);
+}
+.todo-row.overdue .todo-time-tag {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+.todo-date-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--surface-04);
+}
+.todo-date-tab {
+  flex: 1;
+  height: 24px;
+  background: var(--surface-03);
+  border: 1px solid var(--surface-05);
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.todo-date-tab:hover {
+  background: var(--surface-06);
+  color: var(--text-secondary);
+}
+.todo-date-tab.active {
+  background: rgba(196,122,90,0.15);
+  border-color: rgba(196,122,90,0.25);
+  color: #c47a5a;
+}
+
+.todo-section {
+  margin-bottom: 8px;
+}
+.todo-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.todo-section-label.overdue-label {
+  color: #e74c3c;
+}
+
+.todo-row.overdue {
+  border-left: 2px solid rgba(231, 76, 60, 0.4);
+}
+
+.todo-text.readonly {
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+
+.recurring-row {
+  gap: 6px;
+}
+.recurring-type-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(196, 122, 90, 0.15);
+  color: #c47a5a;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.recurring-detail {
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.recurring-create {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recurring-create-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.recurring-select {
+  height: 28px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  color: #d4cdc5;
+  font-size: 11px;
+  padding: 0 6px;
+  outline: none;
+  flex-shrink: 0;
+}
+.recurring-weekdays {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.weekday-check {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.weekday-check input {
+  accent-color: #c47a5a;
+  width: 12px;
+  height: 12px;
+}
+.recurring-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.recurring-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.custom-dates-list {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.custom-date-tag {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-06);
+  color: var(--text-secondary);
+}
+.tag-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 8px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+/* ── Notes ── */
+.note-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-title-input {
+  flex: 1;
+  height: 28px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  color: #d4cdc5;
+  font-size: 12px;
+  padding: 0 10px;
+  outline: none;
+}
+
+.note-content-input {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  color: #d4cdc5;
+  font-size: 12px;
+  padding: 10px;
+  outline: none;
+}
+
+.note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.note-card {
+  border: 1px solid rgba(255,255,255,0.06);
+  border-left: 4px solid;
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255,255,255,0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.note-title {
+  flex: 1;
+  height: 26px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  color: #d4cdc5;
+  padding: 0 8px;
+  outline: none;
+}
+
+.note-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-color {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.note-pin {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #6e6760;
+  user-select: none;
+}
+
+.note-content {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  color: #d4cdc5;
+  font-size: 12px;
+  padding: 10px;
+  outline: none;
+}
+
 .mini-btn.danger.confirming {
   background: rgba(220, 90, 90, 0.35);
   border-color: rgba(220, 90, 90, 0.5);
@@ -2048,11 +2973,11 @@ onMounted(async () => {
   appearance: none;
   background: var(--surface-03);
   border: 1px solid var(--surface-05);
-  border-radius: 8px;
-  color: var(--text-muted);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  padding: 4px 6px;
+  border-radius: 25px;
+  color: var(--text-secondary);
+  font-family: 'Outfit', sans-serif;
+  font-size: 11px;
+  padding: 4px 10px;
   height: 28px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -2063,11 +2988,13 @@ onMounted(async () => {
 }
 .date-input:hover {
   border-color: var(--surface-10);
-  color: var(--text-secondary);
+  background: var(--surface-05);
+  color: var(--text-primary);
 }
 .date-input:focus {
   outline: none;
-  border-color: rgba(196, 122, 90, 0.25);
+  border-color: rgba(196, 122, 90, 0.4);
+  box-shadow: 0 0 0 2px rgba(196, 122, 90, 0.1);
   color: #c47a5a;
 }
 

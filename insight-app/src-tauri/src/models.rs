@@ -234,6 +234,68 @@ pub struct CategoryAppBreakdown {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HourlyStat {
-    pub hour: u32,        // 0-23
+    pub hour: u32, // 0-23
     pub total_secs: i64,
+}
+
+/// 待做事项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    pub id: Option<i64>,
+    pub text: String,
+    pub done: bool,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub source: String, // manual | markdown
+    #[serde(default)]
+    pub group_id: Option<String>,
+    #[serde(default)]
+    pub due_date: Option<i64>,
+    #[serde(default)]
+    pub target_date: Option<i64>,
+    #[serde(default)]
+    pub done_date: Option<i64>,
+}
+
+/// Markdown 导入结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoImportResult {
+    pub imported: usize,
+    pub ignored: usize,
+}
+
+/// 重复待做规则
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringTodo {
+    pub id: Option<i64>,
+    pub text: String,
+    pub repeat_type: String, // weekday | range | custom
+    #[serde(default)]
+    pub weekdays: Option<String>, // "1,3,5"
+    #[serde(default)]
+    pub start_date: Option<i64>,
+    #[serde(default)]
+    pub end_date: Option<i64>,
+    #[serde(default)]
+    pub custom_dates: Option<String>, // "ts1,ts2,ts3"
+    pub created_at: i64,
+    pub active: bool,
+}
+
+/// 便签
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteItem {
+    pub id: Option<i64>,
+    pub title: String,
+    pub content: String,
+    pub color: String,
+    pub pinned: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
