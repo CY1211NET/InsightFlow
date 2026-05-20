@@ -62,10 +62,10 @@ async fn handle_web_visit(
         .timestamp
         .map(|t| if t > 1_000_000_000_000 { t / 1000 } else { t })
         .unwrap_or_else(|| chrono::Utc::now().timestamp());
-    // 插件发送毫秒 duration，转为秒
+    // 插件始终发送毫秒 duration（Date.now() 差值），统一除以 1000 转为秒
     let duration_secs = payload
         .duration
-        .map(|d| if d > 1000 { d / 1000 } else { d })
+        .map(|d| (d / 1000).max(0))
         .unwrap_or(0);
 
     let db = state.db_conn.lock().unwrap();

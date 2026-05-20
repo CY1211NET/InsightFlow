@@ -178,24 +178,25 @@ defineEmits<{
 }
 
 .toggle-btn.toggle-on {
-  background: #c47a5a;
+  background: var(--text-primary);
 }
 
 .toggle-knob {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 12px;
-  height: 12px;
-  background: #fff;
+  width: 10px;
+  height: 10px;
+  background: var(--text-muted);
   border-radius: 50%;
-  transition: transform 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
   display: block;
 }
 
 .toggle-btn.toggle-on .toggle-knob {
-  transform: translateX(16px);
+  transform: translateX(14px);
+  background: var(--bg-solid);
 }
 
 /* ─── Module goals grid in settings ─── */

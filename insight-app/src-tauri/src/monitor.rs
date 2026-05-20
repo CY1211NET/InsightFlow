@@ -391,23 +391,21 @@ unsafe extern "system" fn win_event_callback(
         Err(_) => return,
     };
 
-    {
+    // ── 先检查是否为忽略的应用（但不要立即 return，需先结束上一个活动）──
+    let is_ignored = {
         let classifier = match ctx.classifier.lock() {
             Ok(c) => c,
             Err(_) => return,
         };
-        if classifier.is_ignored_app(&app_name) {
-            info!("Ignoring app: {}", app_name);
-            return;
-        }
-    }
+        classifier.is_ignored_app(&app_name)
+    };
 
     if let Some(ref prev) = ctx.current.clone() {
         // 用户处于空闲状态时，忽略窗口切换事件（由 idle_watcher 管理）
         if prev.app_name == Category::Afk.as_str() {
             return;
         }
-        if prev.app_name == app_name {
+        if prev.app_name == app_name && !is_ignored {
             // 同一应用的重复事件：从缓存读取，不访问 DB
             let category = prev.category.clone();
             let current_dur = now - prev.start_time;
@@ -418,12 +416,13 @@ unsafe extern "system" fn win_event_callback(
                 focus_secs += current_dur;
             }
             let cat_secs = cached_category_secs(&category) + current_dur;
-            let past_app_secs = cached_app_secs(&app_name);
+            // 使用 prev.app_name（safe_app）查缓存，保证与缓存 key 一致
+            let past_app_secs = cached_app_secs(&prev.app_name);
 
             let goal_secs = ctx.daily_goal_secs;
             let goal_pct = ((focus_secs as f32 / goal_secs as f32) * 100.0).min(100.0) as u32;
             let overlay_data = OverlayData {
-                current_app: app_name,
+                current_app: prev.app_name.clone(),
                 category,
                 session_secs: past_app_secs + current_dur,
                 focus_secs,
@@ -434,11 +433,21 @@ unsafe extern "system" fn win_event_callback(
             let _ = ctx.app_handle.emit("activity-changed", overlay_data);
             return;
         }
-        // 不同应用：结束上一个活动
+        // 不同应用（或切换到忽略应用）：结束上一个活动并更新缓存
         if prev.db_id > 0 && now > prev.start_time {
+            let prev_dur = now - prev.start_time;
             let db = ctx.db_conn.lock().unwrap();
             let _ = update_activity_end(&db, prev.db_id, now);
+            drop(db);
+            update_cache_after_insert(&prev.category, &prev.app_name, prev_dur);
         }
+    }
+
+    // ── 忽略的应用：已结束上一个活动，不创建新记录 ──
+    if is_ignored {
+        info!("Ignoring app: {} (previous activity ended)", app_name);
+        ctx.current = None; // 清除当前会话，避免后续重复计算
+        return;
     }
 
     let (safe_app, safe_title, category) = {
@@ -464,14 +473,6 @@ unsafe extern "system" fn win_event_callback(
         end_time: None,
     };
 
-    // 更新缓存：上一个活动的时长（用真实 app_name 保证缓存一致性）
-    if let Some(ref prev) = ctx.current {
-        let prev_dur = now - prev.start_time;
-        if prev_dur > 0 {
-            update_cache_after_insert(&prev.category, &prev.app_name, prev_dur);
-        }
-    }
-
     // 只做写操作，读取全部走缓存
     let new_id = {
         let db = ctx.db_conn.lock().unwrap();
@@ -487,7 +488,7 @@ unsafe extern "system" fn win_event_callback(
 
     let focus_secs = cached_focus_secs();
     let category_secs = cached_category_secs(&category);
-    let app_secs = cached_app_secs(&app_name);
+    let app_secs = cached_app_secs(&safe_app);
     let goal_secs = ctx.daily_goal_secs;
     let goal_pct = ((focus_secs as f32 / goal_secs as f32) * 100.0).min(100.0) as u32;
 

@@ -216,9 +216,9 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 }
 
 .date-input-trigger.active {
-  border-color: rgba(196, 122, 90, 0.4);
-  box-shadow: 0 0 0 2px rgba(196, 122, 90, 0.1);
-  color: #c47a5a;
+  border-color: var(--accent-ring);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  color: var(--accent);
 }
 
 .calendar-icon {
@@ -352,12 +352,12 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 }
 
 .cal-day.today {
-  color: #c47a5a;
+  color: var(--accent);
   font-weight: 600;
 }
 
 .cal-day.selected {
-  background: #c47a5a;
+  background: var(--accent);
   color: #fff;
   font-weight: 600;
 }

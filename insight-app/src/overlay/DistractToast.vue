@@ -46,7 +46,7 @@ defineEmits<{
 
 .toast-text {
   font-size: 10px;
-  color: #c47a5a;
+  color: var(--accent);
   flex: 1;
   font-weight: 500;
 }

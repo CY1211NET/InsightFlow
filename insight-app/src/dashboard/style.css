@@ -1,37 +1,37 @@
 
 :root {
-  --bg: #F5F0EB;
-  --bg-solid: #F5F0EB;
-  --text-primary: #2C2420;
-  --text-secondary: #6B5E54;
-  --text-muted: #A89A8E;
-  --text-dim: #D1C5B8;
+  --bg: #F7F7F5;
+  --bg-solid: #F7F7F5;
+  --text-primary: #1A1A1A;
+  --text-secondary: #5A5A5A;
+  --text-muted: #9A9A9A;
+  --text-dim: #C8C8C8;
   --surface-02: rgba(0,0,0,0.02);
   --surface-03: rgba(0,0,0,0.03);
   --surface-04: rgba(0,0,0,0.04);
   --surface-05: rgba(0,0,0,0.05);
   --surface-06: rgba(0,0,0,0.06);
   --surface-08: rgba(0,0,0,0.08);
-  --surface-10: rgba(0,0,0,0.1);
+  --surface-10: rgba(0,0,0,0.10);
   --surface-12: rgba(0,0,0,0.12);
   --surface-15: rgba(0,0,0,0.15);
   --surface-25: rgba(0,0,0,0.25);
 }
 
 :root.night {
-  --bg: #1C1917;
-  --bg-solid: #1C1917;
-  --text-primary: #e8e0d8;
-  --text-secondary: #9e958c;
-  --text-muted: #6e6760;
-  --text-dim: #5a544e;
+  --bg: #1A1A1A;
+  --bg-solid: #1A1A1A;
+  --text-primary: #E0E0E0;
+  --text-secondary: #A0A0A0;
+  --text-muted: #606060;
+  --text-dim: #444444;
   --surface-02: rgba(255,255,255,0.02);
   --surface-03: rgba(255,255,255,0.03);
   --surface-04: rgba(255,255,255,0.04);
   --surface-05: rgba(255,255,255,0.05);
   --surface-06: rgba(255,255,255,0.06);
   --surface-08: rgba(255,255,255,0.08);
-  --surface-10: rgba(255,255,255,0.1);
+  --surface-10: rgba(255,255,255,0.10);
   --surface-12: rgba(255,255,255,0.12);
   --surface-15: rgba(255,255,255,0.15);
   --surface-25: rgba(255,255,255,0.25);

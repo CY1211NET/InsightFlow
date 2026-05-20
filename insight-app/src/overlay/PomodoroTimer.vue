@@ -56,7 +56,7 @@ defineProps<{
   color: var(--text-primary);
 }
 
-.pomo-phase.focus { color: #c47a5a; }
+.pomo-phase.focus { color: var(--accent); }
 .pomo-phase.break { color: #7a9e7e; }
 
 .pomo-count {
@@ -76,7 +76,7 @@ defineProps<{
 }
 
 .pomo-timer.ticking {
-  color: #c47a5a;
+  color: var(--accent);
 }
 
 .pomo-timer.done {

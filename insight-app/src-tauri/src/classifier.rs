@@ -161,7 +161,7 @@ impl ClassifierConfig {
         let lower = app_name.to_lowercase();
         self.ignored_apps
             .iter()
-            .any(|s| lower.contains(s.as_str()))
+            .any(|s| lower == s.to_lowercase())
     }
 }
 

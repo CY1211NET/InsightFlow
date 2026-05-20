@@ -28,25 +28,26 @@
     <!-- 操作栏 -->
     <div class="row-actions">
       <button class="icon-btn" :title="t('overlay.historyBtn')" :aria-label="t('overlay.historyBtn')" @click="openDashboard">
-        <span style="font-size:13px">📊</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg>
       </button>
-      <button class="icon-btn" :class="{ active: showPomodoro }" :title="t('overlay.pomodoro')" :aria-label="t('overlay.pomodoro')" @click="togglePomodoro">
-        <span style="font-size:13px">🍅</span>
+      <button class="icon-btn" :class="{ active: showPomodoro }" :title="t('overlay.pomodoroFocus')" :aria-label="t('overlay.pomodoroFocus')" @click="togglePomodoro">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3l2 2"/><path d="M19 3l-2 2"/><path d="M12 3v2"/></svg>
       </button>
       <button class="icon-btn" :class="{ active: showTodo }" :title="t('dashboard.todos')" :aria-label="t('dashboard.todos')" @click="toggleTodoList">
-        <span style="font-size:13px">✅</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
       </button>
       <button class="icon-btn" :class="{ active: pinned }" :title="pinned ? t('overlay.unpin') : t('overlay.pin')" :aria-label="t('overlay.pin')" :aria-pressed="pinned" @click.stop="togglePinned">
-        <span style="font-size:13px">📌</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" :fill="pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V7a1 1 0 011-1 2 2 0 000-4H8a2 2 0 000 4 1 1 0 011 1z"/></svg>
       </button>
       <button class="icon-btn" :class="{ active: clickThrough }" :title="t('overlay.clickThrough') + ' (Ctrl+Shift+I)'" :aria-label="t('overlay.clickThrough')" :aria-pressed="clickThrough" @click="toggleClickThrough">
-        <span style="font-size:13px">🔍</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       </button>
       <button class="icon-btn" :title="t('overlay.theme')" :aria-label="t('overlay.theme')" @click="toggleTheme">
-        <span style="font-size:13px">{{ theme === 'day' ? '☀️' : '🌙' }}</span>
+        <svg v-if="theme === 'day'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
       <button class="icon-btn" :title="t('overlay.settings')" :aria-label="t('overlay.settings')" @click="toggleSettings">
-        <span style="font-size:13px">⚙️</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
       </button>
     </div>
 
@@ -585,15 +586,15 @@ onUnmounted(() => {
 <style scoped>
 /* ─── Theme variables ─── */
 .widget {
-  --bg: rgba(245, 240, 235, 0.95);
-  --bg-solid: #F5F0EB;
-  --border: rgba(0, 0, 0, 0.06);
-  --text-primary: #2C2420;
-  --text-secondary: #6B5E54;
-  --text-muted: #A89A8E;
+  --bg: rgba(247, 247, 245, 0.95);
+  --bg-solid: #F7F7F5;
+  --border: rgba(0, 0, 0, 0.08);
+  --text-primary: #1A1A1A;
+  --text-secondary: #5A5A5A;
+  --text-muted: #9A9A9A;
   --surface: rgba(0, 0, 0, 0.04);
   --surface-hover: rgba(0, 0, 0, 0.07);
-  --track: rgba(0, 0, 0, 0.06);
+  --track: rgba(0, 0, 0, 0.08);
 
   width: calc(100vw - 20px);
   margin: 10px;
@@ -615,15 +616,15 @@ onUnmounted(() => {
 
 /* ─── Night theme ─── */
 .widget.night {
-  --bg: rgba(28, 25, 23, 0.92);
-  --bg-solid: #1C1917;
-  --border: rgba(255, 255, 255, 0.06);
-  --text-primary: #E8E0D8;
-  --text-secondary: #9E958C;
-  --text-muted: #5A544E;
-  --surface: rgba(255, 255, 255, 0.05);
-  --surface-hover: rgba(255, 255, 255, 0.08);
-  --track: rgba(255, 255, 255, 0.06);
+  --bg: rgba(26, 26, 26, 0.92);
+  --bg-solid: #1A1A1A;
+  --border: rgba(255, 255, 255, 0.08);
+  --text-primary: #E0E0E0;
+  --text-secondary: #A0A0A0;
+  --text-muted: #606060;
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.10);
+  --track: rgba(255, 255, 255, 0.08);
 }
 
 .widget.fading {
@@ -744,13 +745,14 @@ onUnmounted(() => {
 }
 
 .icon-btn.active {
-  background: rgba(196, 122, 90, 0.15);
+  background: rgba(196, 122, 90, 0.12);
   color: #c47a5a;
   border-color: rgba(196, 122, 90, 0.2);
 }
 
 .night .icon-btn.active {
   background: rgba(196, 122, 90, 0.2);
+  color: #d4906e;
   border-color: rgba(196, 122, 90, 0.3);
 }
 

@@ -283,36 +283,50 @@
               <div class="recurring-create">
                 <div class="recurring-create-row">
                   <input class="todo-input" v-model="newRecurringText" :placeholder="t('dashboard.recurringNew')" @keydown.enter="addRecurringTodo" />
-                  <select class="recurring-select" v-model="newRecurringType">
-                    <option value="weekday">{{ t('dashboard.repeatWeekday') }}</option>
-                    <option value="range">{{ t('dashboard.repeatRange') }}</option>
-                    <option value="custom">{{ t('dashboard.repeatCustom') }}</option>
-                  </select>
-                  <button class="mini-btn primary" @click="addRecurringTodo">{{ t('dashboard.add') }}</button>
-                </div>
-                <!-- weekday 配置 -->
-                <div v-if="newRecurringType === 'weekday'" class="recurring-weekdays">
-                  <label v-for="(d, i) in weekdayLabels" :key="i" class="weekday-check">
-                    <input type="checkbox" :value="i + 1" v-model="newRecurringWeekdays" />
-                    <span>{{ d }}</span>
-                  </label>
-                </div>
-                <!-- range 配置 -->
-                <div v-if="newRecurringType === 'range'" class="recurring-range">
-                  <DatePicker v-model="newRecurringStart" />
-                  <span>~</span>
-                  <DatePicker v-model="newRecurringEnd" />
-                </div>
-                <!-- custom 配置 -->
-                <div v-if="newRecurringType === 'custom'" class="recurring-custom">
-                  <DatePicker v-model="newRecurringCustomDate" />
-                  <button class="mini-btn" @click="addCustomDate">{{ t('dashboard.addDate') }}</button>
-                  <div class="custom-dates-list">
-                    <span v-for="(d, i) in newRecurringCustomDates" :key="i" class="custom-date-tag">
-                      {{ formatCustomDate(d) }}
-                      <button class="tag-remove" @click="newRecurringCustomDates.splice(i, 1)">✕</button>
-                    </span>
+                  <div class="recurring-type-wrap" @click.stop>
+                    <button class="recurring-type-btn" @click="openRecurringMenu">
+                      {{ recurringTypeLabel(newRecurringType) }}
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div v-if="showRecurringTypeMenu" class="recurring-type-menu" :style="recurringMenuStyle">
+                      <!-- 胶囊选项卡 -->
+                      <div class="recurring-pills">
+                        <button class="recurring-pill" :class="{ active: newRecurringType === 'weekday' }" @click="newRecurringType = 'weekday'">{{ t('dashboard.repeatWeekday') }}</button>
+                        <button class="recurring-pill" :class="{ active: newRecurringType === 'range' }" @click="newRecurringType = 'range'">{{ t('dashboard.repeatRange') }}</button>
+                        <button class="recurring-pill" :class="{ active: newRecurringType === 'custom' }" @click="newRecurringType = 'custom'">{{ t('dashboard.repeatCustom') }}</button>
+                      </div>
+                      <!-- 配置UI -->
+                      <div class="recurring-menu-config">
+                        <!-- weekday 配置 -->
+                        <div v-if="newRecurringType === 'weekday'" class="recurring-config-inline">
+                          <label v-for="(d, i) in weekdayLabels" :key="i" class="weekday-check">
+                            <input type="checkbox" :value="i + 1" v-model="newRecurringWeekdays" />
+                            <span>{{ d }}</span>
+                          </label>
+                        </div>
+                        <!-- range 配置 -->
+                        <div v-if="newRecurringType === 'range'" class="recurring-config-inline">
+                          <DatePicker v-model="newRecurringStart" />
+                          <span class="range-sep">~</span>
+                          <DatePicker v-model="newRecurringEnd" />
+                        </div>
+                        <!-- custom 配置 -->
+                        <div v-if="newRecurringType === 'custom'" class="recurring-config-inline">
+                          <DatePicker v-model="newRecurringCustomDate" />
+                          <button class="mini-btn" @click="addCustomDate">{{ t('dashboard.addDate') }}</button>
+                          <div class="custom-dates-list">
+                            <span v-for="(d, i) in newRecurringCustomDates" :key="i" class="custom-date-tag">
+                              {{ formatCustomDate(d) }}
+                              <button class="tag-remove" @click="newRecurringCustomDates.splice(i, 1)">✕</button>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <!-- 确认按钮 -->
+                      <button class="recurring-menu-confirm" @click="showRecurringTypeMenu = false">✓</button>
+                    </div>
                   </div>
+                  <button class="mini-btn primary" @click="addRecurringTodo">{{ t('dashboard.add') }}</button>
                 </div>
               </div>
 
@@ -622,7 +636,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { t, loadLocale, getLocale, setLocale, watchLocale } from '../shared/i18n'
@@ -803,6 +817,7 @@ const newRecurringEnd = ref('')
 const newRecurringCustomDate = ref('')
 const newRecurringCustomDates = ref<string[]>([])
 const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日']
+const showRecurringTypeMenu = ref(false)
 
 const todayStartTs = computed(() => {
   const d = new Date()
@@ -1471,6 +1486,54 @@ function formatDoneDate(ts: number | null): string {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
+function closeRecurringTypeMenu(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.recurring-type-wrap')) {
+    showRecurringTypeMenu.value = false
+    recurringMenuStyle.value = {}
+  }
+}
+
+const recurringMenuStyle = ref<Record<string, string>>({})
+
+function openRecurringMenu() {
+  showRecurringTypeMenu.value = !showRecurringTypeMenu.value
+  if (showRecurringTypeMenu.value) {
+    nextTick(() => {
+      const btn = document.querySelector('.recurring-type-btn') as HTMLElement
+      const menu = document.querySelector('.recurring-type-menu') as HTMLElement
+      if (!btn || !menu) return
+
+      const btnRect = btn.getBoundingClientRect()
+      const menuWidth = 220
+      const menuHeight = menu.offsetHeight || 200
+      const viewportW = window.innerWidth
+      const viewportH = window.innerHeight
+
+      let top = btnRect.bottom + 4
+      let left = btnRect.left
+
+      // 右边缘检测
+      if (left + menuWidth > viewportW - 8) {
+        left = btnRect.right - menuWidth
+      }
+      // 底部边缘检测
+      if (top + menuHeight > viewportH - 8) {
+        top = btnRect.top - menuHeight - 4
+      }
+      // 左边缘检测
+      if (left < 8) left = 8
+
+      recurringMenuStyle.value = {
+        position: 'fixed',
+        top: top + 'px',
+        left: left + 'px',
+        zIndex: '100',
+      }
+    })
+  }
+}
+
 async function loadNotes() {
   try {
     notes.value = await invoke<NoteItem[]>('list_notes')
@@ -1689,6 +1752,8 @@ onMounted(async () => {
     }
   })
 
+  document.addEventListener('click', closeRecurringTypeMenu)
+
   listen('todos-changed', () => {
     loadTodos()
     loadRecurringTodos()
@@ -1727,6 +1792,10 @@ onMounted(async () => {
     loadCategoryApps(),
     loadHourlyData(),
   ])
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeRecurringTypeMenu)
 })
 </script>
 
@@ -1859,9 +1928,9 @@ onMounted(async () => {
 }
 
 .date-tab.active {
-  background: rgba(196,122,90,0.15);
+  background: var(--accent-soft);
   border-color: rgba(196,122,90,0.25);
-  color: #c47a5a;
+  color: var(--accent);
 }
 
 /* Section */
@@ -2070,7 +2139,7 @@ onMounted(async () => {
 
 .weekly-bar-fill {
   width: 100%;
-  background: #c47a5a;
+  background: var(--accent);
   border-radius: 3px 3px 0 0;
   transition: height 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   min-height: 2px;
@@ -2175,7 +2244,7 @@ onMounted(async () => {
 }
 
 .act-correct-select:hover {
-  border-color: #c47a5a;
+  border-color: var(--accent);
   color: var(--text-primary);
 }
 .act-correct-select option {
@@ -2375,9 +2444,9 @@ onMounted(async () => {
 }
 
 .mini-btn.primary {
-  background: rgba(196,122,90,0.15);
+  background: var(--accent-soft);
   border-color: rgba(196,122,90,0.25);
-  color: #c47a5a;
+  color: var(--accent);
 }
 
 .mini-btn.danger {
@@ -2453,7 +2522,7 @@ onMounted(async () => {
 }
 
 .todo-row input[type="checkbox"] {
-  accent-color: #c47a5a;
+  accent-color: var(--accent);
   width: 14px;
   height: 14px;
   cursor: pointer;
@@ -2525,9 +2594,9 @@ onMounted(async () => {
   color: var(--text-secondary);
 }
 .todo-date-tab.active {
-  background: rgba(196,122,90,0.15);
+  background: var(--accent-soft);
   border-color: rgba(196,122,90,0.25);
-  color: #c47a5a;
+  color: var(--accent);
 }
 
 .todo-section {
@@ -2565,8 +2634,8 @@ onMounted(async () => {
   font-size: 9px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(196, 122, 90, 0.15);
-  color: #c47a5a;
+  background: var(--accent-soft);
+  color: var(--accent);
   white-space: nowrap;
   flex-shrink: 0;
   font-weight: 500;
@@ -2589,22 +2658,6 @@ onMounted(async () => {
   gap: 6px;
   align-items: center;
 }
-.recurring-select {
-  height: 28px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 8px;
-  color: #d4cdc5;
-  font-size: 11px;
-  padding: 0 6px;
-  outline: none;
-  flex-shrink: 0;
-}
-.recurring-weekdays {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
 .weekday-check {
   display: flex;
   align-items: center;
@@ -2614,22 +2667,91 @@ onMounted(async () => {
   cursor: pointer;
 }
 .weekday-check input {
-  accent-color: #c47a5a;
+  accent-color: var(--accent);
   width: 12px;
   height: 12px;
 }
-.recurring-range {
+.recurring-type-wrap {
+  position: relative;
+}
+.recurring-type-btn {
+  height: 28px;
+  background: var(--surface-04);
+  border: 1px solid var(--surface-06);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 0 10px;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
+  gap: 4px;
+  transition: all 0.15s ease;
 }
-.recurring-custom {
+.recurring-type-btn:hover {
+  background: var(--surface-06);
+  color: var(--text-primary);
+}
+.recurring-type-menu {
+  background: var(--bg-solid);
+  border: 1px solid var(--surface-08);
+  border-radius: 10px;
+  padding: 8px;
+  min-width: 220px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.recurring-pills {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-04);
+  border-radius: 8px;
+  padding: 3px;
+}
+.recurring-pill {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.recurring-pill:hover {
+  color: var(--text-secondary);
+}
+.recurring-pill.active {
+  background: var(--surface-08);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.recurring-menu-config {
+  padding: 8px 4px;
+}
+.recurring-config-inline {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+.recurring-menu-confirm {
+  display: block;
+  width: 100%;
+  padding: 6px;
+  border: none;
+  background: var(--surface-06);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  margin-top: 6px;
+  transition: all 0.1s ease;
+}
+.recurring-menu-confirm:hover {
+  background: var(--surface-08);
 }
 .custom-dates-list {
   display: flex;
@@ -2793,7 +2915,7 @@ onMounted(async () => {
 }
 
 .clear-option input[type="checkbox"] {
-  accent-color: #c47a5a;
+  accent-color: var(--accent);
   width: 14px;
   height: 14px;
   cursor: pointer;
@@ -2993,15 +3115,15 @@ onMounted(async () => {
 }
 .date-input:focus {
   outline: none;
-  border-color: rgba(196, 122, 90, 0.4);
-  box-shadow: 0 0 0 2px rgba(196, 122, 90, 0.1);
-  color: #c47a5a;
+  border-color: var(--accent-ring);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  color: var(--accent);
 }
 
 .custom-range.active .date-input {
-  background: rgba(196, 122, 90, 0.15);
+  background: var(--accent-soft);
   border-color: rgba(196, 122, 90, 0.25);
-  color: #c47a5a;
+  color: var(--accent);
 }
 
 .date-input::-webkit-calendar-picker-indicator {
@@ -3083,7 +3205,7 @@ onMounted(async () => {
 
 .hourly-bar-fill {
   width: 100%;
-  background: #c47a5a;
+  background: var(--accent);
   border-radius: 3px 3px 0 0;
   transition: height 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   min-height: 2px;

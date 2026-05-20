@@ -195,7 +195,7 @@ const sortedTodos = computed(() =>
 .todo-cb {
   width: 12px;
   height: 12px;
-  accent-color: #c47a5a;
+  accent-color: var(--accent);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -245,8 +245,8 @@ const sortedTodos = computed(() =>
   color: #e74c3c;
 }
 .todo-due-tag.due-today {
-  background: rgba(196, 122, 90, 0.15);
-  color: #c47a5a;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .todo-due-tag.due-future {
   background: var(--surface-06);

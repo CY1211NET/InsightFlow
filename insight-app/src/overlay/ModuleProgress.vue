@@ -53,13 +53,13 @@ defineEmits<{
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: 4px;
+  padding-top: 6px;
   border-top: 1px solid var(--track);
   max-height: 220px;
   overflow-y: auto;
 }
-.row-modules::-webkit-scrollbar { width: 3px; }
-.row-modules::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+.row-modules::-webkit-scrollbar { width: 2px; }
+.row-modules::-webkit-scrollbar-thumb { background: var(--track); border-radius: 99px; }
 
 .mod-entry {
   display: flex;
@@ -70,13 +70,13 @@ defineEmits<{
 .mod-header {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 4px;
+  gap: 8px;
+  padding: 4px 6px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.mod-header:hover { background: var(--surface); }
+.mod-header:hover { background: var(--surface-hover); }
 
 .mod-dot {
   width: 5px;
@@ -95,16 +95,16 @@ defineEmits<{
 
 .mod-track {
   flex: 1;
-  height: 3px;
+  height: 2px;
   background: var(--track);
-  border-radius: 2px;
+  border-radius: 99px;
   overflow: hidden;
 }
 
 .mod-fill {
   height: 100%;
-  border-radius: 2px;
-  transition: width 0.5s cubic-bezier(0.22,1,0.36,1);
+  border-radius: 99px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .mod-time {
