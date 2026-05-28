@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>InsightFlow Note</title>
+    <!-- Non-render-blocking font load: use media="print" trick -->
+    <link rel="preconnect" href="https://fonts.loli.net" crossorigin />
+    <link
+      href="https://fonts.loli.net/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
+    <!-- Inline fallback: ensures the window is NEVER invisible -->
+    <style>
+      html, body, #app {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        background: transparent !important;
+        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        overflow: hidden;
+      }
+      /* Visible error state in case Vue fails to mount */
+      .mount-error {
+        padding: 16px;
+        color: #b91c1c;
+        font-size: 12px;
+        font-family: 'Consolas', 'Courier New', monospace;
+        word-break: break-all;
+        background: rgba(255,255,255,0.7);
+        border-radius: 8px;
+        margin: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./src/note/main.ts"></script>
+  </body>
+</html>

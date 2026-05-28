@@ -42,3 +42,30 @@ export interface TodoItem {
   targetDate: number | null
   doneDate: number | null
 }
+
+export interface ChecklistItem {
+  id: string
+  text: string
+  done: boolean
+  sortOrder: number
+}
+
+export interface NoteItem {
+  id: number | null
+  title: string
+  content: string
+  color: string
+  pinned: boolean
+  noteType: string
+  checklistItems: string
+  sortOrder: number
+  x: number | null
+  y: number | null
+  width: number | null
+  height: number | null
+  trashed: boolean
+  trashedAt: number | null
+  createdAt: number
+  updatedAt: number
+  _parsedChecklist?: ChecklistItem[]
+}

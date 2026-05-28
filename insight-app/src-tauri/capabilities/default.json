@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "InsightFlow default capabilities",
-  "windows": ["overlay", "dashboard"],
+  "windows": ["overlay", "dashboard", "note_*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-ignore-cursor-events",
@@ -13,6 +13,14 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
-    "core:event:allow-listen"
+    "core:window:allow-close",
+    "core:window:allow-inner-size",
+    "core:window:allow-inner-position",
+    "core:window:allow-scale-factor",
+    "core:window:allow-is-visible",
+    "core:window:allow-is-minimized",
+    "core:window:allow-unminimize",
+    "core:event:allow-listen",
+    "core:webview:allow-create-webview-window"
   ]
 }

@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
+  base: './',
   clearScreen: false,
   server: {
     port: 1420,
@@ -17,6 +18,7 @@ export default defineConfig({
       input: {
         overlay: 'index.html',
         dashboard: 'dashboard.html',
+        note: 'note.html',
       },
     },
   },

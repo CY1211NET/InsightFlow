@@ -36,6 +36,9 @@
       <button class="icon-btn" :class="{ active: showTodo }" :title="t('dashboard.todos')" :aria-label="t('dashboard.todos')" @click="toggleTodoList">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
       </button>
+      <button class="icon-btn" :class="{ active: showNotes }" :title="t('dashboard.notes') + ' (Ctrl+Shift+N)'" :aria-label="t('dashboard.notes')" @click="toggleNotesList">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </button>
       <button class="icon-btn" :class="{ active: pinned }" :title="pinned ? t('overlay.unpin') : t('overlay.pin')" :aria-label="t('overlay.pin')" :aria-pressed="pinned" @click.stop="togglePinned">
         <svg width="14" height="14" viewBox="0 0 24 24" :fill="pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V7a1 1 0 011-1 2 2 0 000-4H8a2 2 0 000 4 1 1 0 011 1z"/></svg>
       </button>
@@ -101,6 +104,24 @@
       @remove="removeTodo"
     />
 
+    <!-- 便签面板 -->
+    <NotesPanel
+      :show="showNotes"
+      :pinned="pinned"
+      :notes="sortedNotes"
+      :theme="theme"
+      :noteTags="noteTags"
+      :allTags="allTags"
+      @addNote="createAndFloatNote"
+      @floatNote="floatNote"
+      @togglePin="togglePinned"
+      @updateNote="updateNote"
+      @togglePinNote="togglePinNote"
+      @deleteNote="trashNote"
+      @addTag="addTag"
+      @removeTag="removeTag"
+    />
+
     <!-- 分心提醒 Toast -->
     <DistractToast
       :show="showDistractAlert"
@@ -126,6 +147,8 @@ import ModuleProgressPanel from './ModuleProgress.vue'
 import PomodoroTimer from './PomodoroTimer.vue'
 import DistractToast from './DistractToast.vue'
 import TodoList from './TodoList.vue'
+import NotesPanel from './NotesPanel.vue'
+import { useNoteCore } from '../shared/composables/useNoteCore'
 
 // ──────────────────────────────────────────────
 // State
@@ -177,24 +200,65 @@ const {
   loadTodos, addTodo, toggleTodo, removeTodo,
 } = useTodo()
 
-function closeOtherPanels(except: 'settings' | 'modules' | 'pomodoro' | 'todo') {
+// ── Notes ──
+const showNotes = ref(false)
+const {
+  sortedNotes,
+  noteTags,
+  allTags,
+  loadNotes,
+  createNote,
+  updateNote,
+  togglePinNote,
+  trashNote,
+  addTag,
+  removeTag,
+  startNoteSyncListener,
+} = useNoteCore()
+
+async function toggleNotesList() {
+  if (!showNotes.value) {
+    closeOtherPanels('notes')
+    await loadNotes()
+    showNotes.value = true
+  } else {
+    showNotes.value = false
+  }
+}
+
+async function floatNote(noteId: number) {
+  try {
+    await invoke('open_note_window', { noteId })
+  } catch (e) {
+    console.warn('Failed to float note:', e)
+  }
+}
+
+async function createAndFloatNote() {
+  try {
+    const note = await createNote('', '', '#fef3c7')
+    if (note?.id) {
+      await floatNote(note.id)
+    }
+  } catch (e) {
+    console.warn('Failed to create and float note:', e)
+  }
+}
+
+function closeOtherPanels(except: 'settings' | 'modules' | 'pomodoro' | 'todo' | 'notes') {
   if (except !== 'settings' && showSettings.value) showSettings.value = false
   if (except !== 'modules' && showModules.value) { showModules.value = false; expandedModule.value = null }
   if (except !== 'pomodoro' && showPomodoro.value) showPomodoro.value = false
   if (except !== 'todo' && showTodo.value) showTodo.value = false
+  if (except !== 'notes' && showNotes.value) showNotes.value = false
 }
 
 async function togglePomodoro() {
   if (!showPomodoro.value) {
     closeOtherPanels('pomodoro')
-    try { await invoke('resize_overlay', { height: COLLAPSED_H + 130 }) } catch {}
     showPomodoro.value = true
   } else {
     showPomodoro.value = false
-    setTimeout(async () => {
-      if (!showSettings.value && !showModules.value && !showTodo.value)
-        try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
-    }, 200)
   }
 }
 
@@ -202,14 +266,9 @@ async function toggleTodoList() {
   if (!showTodo.value) {
     closeOtherPanels('todo')
     await loadTodos()
-    try { await invoke('resize_overlay', { height: COLLAPSED_H + 160 }) } catch {}
     showTodo.value = true
   } else {
     showTodo.value = false
-    setTimeout(async () => {
-      if (!showSettings.value && !showModules.value && !showPomodoro.value)
-        try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
-    }, 200)
   }
 }
 
@@ -458,26 +517,14 @@ async function loadModuleProgress() {
 }
 
 // ──────────────────────────────────────────────
-// Overlay resize heights
-// ──────────────────────────────────────────────
-const COLLAPSED_H = 180
-
-const EXPANDED_MODS_H = 370   // modules panel
-
 async function toggleSettings() {
   if (!showSettings.value) {
     closeOtherPanels('settings')
     await loadModuleConfigs()
     await loadModuleGoals()
-    const expandedSetsHeight = 260 + Math.ceil(moduleConfigs.value.length / 2) * 40;
-    try { await invoke('resize_overlay', { height: expandedSetsHeight }) } catch (e) { console.warn('resize_overlay failed:', e) }
     showSettings.value = true
   } else {
     showSettings.value = false
-    setTimeout(async () => {
-      if (!showModules.value && !showPomodoro.value && !showTodo.value)
-        try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch (e) { console.warn('resize_overlay failed:', e) }
-    }, 200)
   }
 }
 
@@ -486,15 +533,10 @@ async function toggleModules() {
     closeOtherPanels('modules')
     await loadModuleConfigs()
     await loadModuleProgress()
-    try { await invoke('resize_overlay', { height: EXPANDED_MODS_H }) } catch {}
     showModules.value = true
   } else {
     showModules.value = false
     expandedModule.value = null
-    setTimeout(async () => {
-      if (!showSettings.value && !showPomodoro.value && !showTodo.value)
-        try { await invoke('resize_overlay', { height: COLLAPSED_H }) } catch {}
-    }, 200)
   }
 }
 
@@ -550,6 +592,8 @@ onMounted(async () => {
   await loadModuleConfigs()
   await loadModuleGoals()
   await loadModuleProgress()
+  await loadNotes()
+  startNoteSyncListener()
   await refresh()
   startSessionTick()
   startDistractionCheck()
@@ -563,6 +607,29 @@ onMounted(async () => {
   unlisteners.push(await listen('toggle-click-through', () => {
     toggleClickThrough()
   }))
+
+  unlisteners.push(await listen('toggle-notes-panel', () => {
+    createAndFloatNote()
+  }))
+
+  // Auto-resize overlay based on widget height
+  const widgetEl = document.querySelector('.widget') as HTMLElement
+  if (widgetEl) {
+    let resizeTimer: any = null
+    const observer = new ResizeObserver(() => {
+      if (resizeTimer) clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => {
+        // OffsetHeight includes padding and border. Add a larger safe buffer (32px) to guarantee no OS-level clipping.
+        const h = widgetEl.offsetHeight
+        invoke('resize_overlay', { height: Math.ceil(h + 32) }).catch(() => {})
+      }, 50)
+    })
+    observer.observe(widgetEl)
+    unlisteners.push(() => {
+      observer.disconnect()
+      if (resizeTimer) clearTimeout(resizeTimer)
+    })
+  }
 
   refreshTimer = setInterval(async () => {
     await refresh()
@@ -601,7 +668,7 @@ onUnmounted(() => {
   box-sizing: border-box;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 25px;
+  border-radius: 16px;
   padding: 18px 20px 24px;
   display: flex;
   flex-direction: column;

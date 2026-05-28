@@ -80,6 +80,49 @@ pub fn init_db(db_path: &Path) -> Result<Connection> {
         "ALTER TABLE todos ADD COLUMN done_date INTEGER;",
     );
 
+    // 迁移：为 notes 增加便签扩展列（已有则忽略）
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'markdown';",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN checklist_items TEXT NOT NULL DEFAULT '[]';",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN x INTEGER;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN y INTEGER;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN width INTEGER;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN height INTEGER;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN trashed INTEGER NOT NULL DEFAULT 0;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN trashed_at INTEGER;",
+    );
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_trashed ON notes(trashed);",
+    );
+
+    // 便签标签关联表
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS note_tags (
+            note_id INTEGER NOT NULL,
+            tag     TEXT    NOT NULL,
+            UNIQUE(note_id, tag)
+        );
+        CREATE INDEX IF NOT EXISTS idx_note_tags_note ON note_tags(note_id);
+        CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag);",
+    )?;
+
     // 重复待做规则表
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS recurring_todos (
@@ -957,35 +1000,77 @@ pub fn generate_recurring_todos(conn: &Connection) -> Result<usize> {
 // Notes
 // ──────────────────────────────────────────────
 
+fn row_to_note(row: &rusqlite::Row) -> rusqlite::Result<NoteItem> {
+    let pinned_i: i64 = row.get(4)?;
+    let trashed_i: i64 = row.get(12)?;
+    Ok(NoteItem {
+        id: Some(row.get(0)?),
+        title: row.get(1)?,
+        content: row.get(2)?,
+        color: row.get(3)?,
+        pinned: pinned_i != 0,
+        note_type: row.get(5)?,
+        checklist_items: row.get(6)?,
+        sort_order: row.get(7)?,
+        x: row.get(8)?,
+        y: row.get(9)?,
+        width: row.get(10)?,
+        height: row.get(11)?,
+        trashed: trashed_i != 0,
+        trashed_at: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+    })
+}
+
+const NOTE_SELECT_COLS: &str =
+    "id, title, content, color, pinned, note_type, checklist_items, sort_order,
+     x, y, width, height, trashed, trashed_at, created_at, updated_at";
+
+pub fn get_note(conn: &Connection, id: i64) -> Result<NoteItem> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTE_SELECT_COLS} FROM notes WHERE id = ?1",
+    ))?;
+    stmt.query_row(params![id], row_to_note)
+}
+
 pub fn list_notes(conn: &Connection) -> Result<Vec<NoteItem>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, title, content, color, pinned, created_at, updated_at
-         FROM notes
-         ORDER BY pinned DESC, updated_at DESC",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTE_SELECT_COLS} FROM notes WHERE trashed = 0
+         ORDER BY pinned DESC, sort_order ASC, updated_at DESC",
+    ))?;
 
-    let rows = stmt.query_map([], |row| {
-        let pinned_i: i64 = row.get(4)?;
-        Ok(NoteItem {
-            id: Some(row.get(0)?),
-            title: row.get(1)?,
-            content: row.get(2)?,
-            color: row.get(3)?,
-            pinned: pinned_i != 0,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
-        })
-    })?;
-
+    let rows = stmt.query_map([], row_to_note)?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-pub fn create_note(conn: &Connection, title: &str, content: &str, color: &str) -> Result<NoteItem> {
+pub fn list_trashed_notes(conn: &Connection) -> Result<Vec<NoteItem>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTE_SELECT_COLS} FROM notes WHERE trashed = 1
+         ORDER BY trashed_at DESC",
+    ))?;
+
+    let rows = stmt.query_map([], row_to_note)?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn create_note(
+    conn: &Connection,
+    title: &str,
+    content: &str,
+    color: &str,
+    note_type: &str,
+) -> Result<NoteItem> {
     let ts = now_ts();
+    // sort_order = max + 1
+    let max_order: i64 =
+        conn.query_row("SELECT COALESCE(MAX(sort_order), 0) FROM notes WHERE trashed = 0", [], |r| r.get(0))
+            .unwrap_or(0);
+
     conn.execute(
-        "INSERT INTO notes (title, content, color, pinned, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 0, ?4, ?5)",
-        params![title, content, color, ts, ts],
+        "INSERT INTO notes (title, content, color, pinned, note_type, checklist_items, sort_order, trashed, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 0, ?4, '[]', ?5, 0, ?6, ?7)",
+        params![title, content, color, note_type, max_order + 1, ts, ts],
     )?;
 
     Ok(NoteItem {
@@ -994,6 +1079,15 @@ pub fn create_note(conn: &Connection, title: &str, content: &str, color: &str) -
         content: content.to_string(),
         color: color.to_string(),
         pinned: false,
+        note_type: note_type.to_string(),
+        checklist_items: "[]".to_string(),
+        sort_order: max_order + 1,
+        x: None,
+        y: None,
+        width: None,
+        height: None,
+        trashed: false,
+        trashed_at: None,
         created_at: ts,
         updated_at: ts,
     })
@@ -1005,11 +1099,13 @@ pub fn update_note(
     title: &str,
     content: &str,
     color: &str,
+    note_type: &str,
+    checklist_items: &str,
 ) -> Result<()> {
     let ts = now_ts();
     conn.execute(
-        "UPDATE notes SET title = ?1, content = ?2, color = ?3, updated_at = ?4 WHERE id = ?5",
-        params![title, content, color, ts, id],
+        "UPDATE notes SET title = ?1, content = ?2, color = ?3, note_type = ?4, checklist_items = ?5, updated_at = ?6 WHERE id = ?7",
+        params![title, content, color, note_type, checklist_items, ts, id],
     )?;
     Ok(())
 }
@@ -1026,6 +1122,100 @@ pub fn set_note_pinned(conn: &Connection, id: i64, pinned: bool) -> Result<()> {
 pub fn delete_note(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+pub fn trash_note(conn: &Connection, id: i64) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE notes SET trashed = 1, trashed_at = ?1, updated_at = ?1 WHERE id = ?2",
+        params![ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn restore_note(conn: &Connection, id: i64) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE notes SET trashed = 0, trashed_at = NULL, updated_at = ?1 WHERE id = ?2",
+        params![ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn purge_note(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+pub fn empty_trash(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM notes WHERE trashed = 1", [])?;
+    Ok(())
+}
+
+pub fn reorder_notes(conn: &Connection, ids_in_order: &[i64]) -> Result<()> {
+    for (i, id) in ids_in_order.iter().enumerate() {
+        conn.execute(
+            "UPDATE notes SET sort_order = ?1 WHERE id = ?2",
+            params![i as i64, id],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn update_note_geometry(
+    conn: &Connection,
+    id: i64,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<()> {
+    let ts = now_ts();
+    conn.execute(
+        "UPDATE notes SET x = ?1, y = ?2, width = ?3, height = ?4, updated_at = ?5 WHERE id = ?6",
+        params![x, y, width, height, ts, id],
+    )?;
+    Ok(())
+}
+
+pub fn list_tags_for_note(conn: &Connection, note_id: i64) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT tag FROM note_tags WHERE note_id = ?1 ORDER BY tag")?;
+    let rows = stmt.query_map(params![note_id], |row| row.get(0))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn list_all_tags(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT DISTINCT tag FROM note_tags ORDER BY tag")?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn add_note_tag(conn: &Connection, note_id: i64, tag: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?1, ?2)",
+        params![note_id, tag],
+    )?;
+    Ok(())
+}
+
+pub fn remove_note_tag(conn: &Connection, note_id: i64, tag: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM note_tags WHERE note_id = ?1 AND tag = ?2",
+        params![note_id, tag],
+    )?;
+    Ok(())
+}
+
+pub fn list_notes_by_tag(conn: &Connection, tag: &str) -> Result<Vec<NoteItem>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT n.{cols} FROM notes n
+         JOIN note_tags t ON n.id = t.note_id
+         WHERE t.tag = ?1 AND n.trashed = 0
+         ORDER BY n.pinned DESC, n.sort_order ASC, n.updated_at DESC",
+        cols = "id, title, content, color, pinned, note_type, checklist_items, sort_order, x, y, width, height, trashed, trashed_at, created_at, updated_at"
+    ))?;
+    let rows = stmt.query_map(params![tag], row_to_note)?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 #[cfg(test)]

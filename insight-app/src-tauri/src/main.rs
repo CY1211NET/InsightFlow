@@ -458,11 +458,18 @@ fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteItem>, String> {
 }
 
 #[tauri::command]
+fn get_note(state: State<'_, AppState>, id: i64) -> Result<NoteItem, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::get_note(&db, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn create_note(
     state: State<'_, AppState>,
     title: String,
     content: String,
     color: String,
+    note_type: Option<String>,
 ) -> Result<NoteItem, String> {
     let db = state.db_conn.lock().unwrap();
     let color = if color.trim().is_empty() {
@@ -470,16 +477,21 @@ fn create_note(
     } else {
         color
     };
-    db::create_note(&db, title.trim(), content.as_str(), color.as_str()).map_err(|e| e.to_string())
+    let nt = note_type.unwrap_or_else(|| "markdown".to_string());
+    db::create_note(&db, title.trim(), content.as_str(), color.as_str(), &nt)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn update_note(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: i64,
     title: String,
     content: String,
     color: String,
+    note_type: Option<String>,
+    checklist_items: Option<String>,
 ) -> Result<(), String> {
     let db = state.db_conn.lock().unwrap();
     let color = if color.trim().is_empty() {
@@ -487,20 +499,188 @@ fn update_note(
     } else {
         color
     };
-    db::update_note(&db, id, title.trim(), content.as_str(), color.as_str())
-        .map_err(|e| e.to_string())
+    let nt = note_type.unwrap_or_else(|| "markdown".to_string());
+    let ci = checklist_items.unwrap_or_else(|| "[]".to_string());
+    db::update_note(&db, id, title.trim(), content.as_str(), color.as_str(), &nt, &ci)
+        .map_err(|e| e.to_string())?;
+        
+    let _ = app.emit("note-updated", id);
+    Ok(())
 }
 
 #[tauri::command]
-fn pin_note(state: State<'_, AppState>, id: i64, pinned: bool) -> Result<(), String> {
-    let db = state.db_conn.lock().unwrap();
-    db::set_note_pinned(&db, id, pinned).map_err(|e| e.to_string())
+fn pin_note(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, pinned: bool) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::set_note_pinned(&db, id, pinned).map_err(|e| e.to_string())?;
+    }
+    
+    let _ = app.emit("note-updated", id);
+    let _ = app.emit("notes-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_note(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let db = state.db_conn.lock().unwrap();
     db::delete_note(&db, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_trashed_notes(state: State<'_, AppState>) -> Result<Vec<NoteItem>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_trashed_notes(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn trash_note(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::trash_note(&db, id).map_err(|e| e.to_string())?;
+    }
+    
+    // 关闭对应的独立悬浮窗（如果打开着）
+    use tauri::Manager;
+    let label = format!("note_{}", id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.close();
+    }
+    
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn restore_note(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::restore_note(&db, id).map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn purge_note(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::purge_note(&db, id).map_err(|e| e.to_string())?;
+    }
+    
+    use tauri::Manager;
+    let label = format!("note_{}", id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.close();
+    }
+    
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn empty_trash(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::empty_trash(&db).map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn reorder_notes(state: State<'_, AppState>, ids_in_order: Vec<i64>) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::reorder_notes(&db, &ids_in_order).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_note_geometry(
+    state: State<'_, AppState>,
+    id: i64,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
+    let db = state.db_conn.lock().unwrap();
+    db::update_note_geometry(&db, id, x, y, width, height).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn open_note_window(app: tauri::AppHandle, note_id: i64) -> Result<(), String> {
+    use tauri::{WebviewUrl, Emitter};
+    let label = format!("note_{}", note_id);
+
+    // If window already exists, just show and focus it
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    let url = WebviewUrl::App(format!("note.html?id={}", note_id).parse().unwrap());
+    let win = tauri::WebviewWindowBuilder::new(&app, &label, url)
+        .title("InsightFlow Note")
+        .inner_size(300.0, 320.0)
+        .min_inner_size(240.0, 200.0)
+        .decorations(false) // 恢复无边框
+        .transparent(true)  // 恢复透明
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(true)
+        .shadow(false) // 关键修复：关闭阴影避免 Win11 渲染卡死和偏移
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Emit note ID to the new window after it has time to load and register listeners
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let _ = win.emit("load-note-id", note_id);
+    });
+
+    Ok(())
+}
+
+// ──────────────────────────────────────────────
+// Note Tags
+// ──────────────────────────────────────────────
+
+#[tauri::command]
+fn list_tags_for_note(state: State<'_, AppState>, note_id: i64) -> Result<Vec<String>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_tags_for_note(&db, note_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_all_tags(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_all_tags(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_note_tag(app: tauri::AppHandle, state: State<'_, AppState>, note_id: i64, tag: String) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::add_note_tag(&db, note_id, &tag).map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_note_tag(app: tauri::AppHandle, state: State<'_, AppState>, note_id: i64, tag: String) -> Result<(), String> {
+    {
+        let db = state.db_conn.lock().unwrap();
+        db::remove_note_tag(&db, note_id, &tag).map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn list_notes_by_tag(state: State<'_, AppState>, tag: String) -> Result<Vec<NoteItem>, String> {
+    let db = state.db_conn.lock().unwrap();
+    db::list_notes_by_tag(&db, &tag).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -869,10 +1049,24 @@ fn main() {
             delete_recurring_todo,
             toggle_recurring_todo,
             list_notes,
+            get_note,
             create_note,
             update_note,
             pin_note,
-            delete_note
+            delete_note,
+            list_trashed_notes,
+            trash_note,
+            restore_note,
+            purge_note,
+            empty_trash,
+            reorder_notes,
+            update_note_geometry,
+            open_note_window,
+            list_tags_for_note,
+            list_all_tags,
+            add_note_tag,
+            remove_note_tag,
+            list_notes_by_tag
         ])
         .setup(move |app| {
             setup_tray(app)?;
@@ -945,6 +1139,15 @@ fn main() {
                 }
                 info!("Hotkey Ctrl+Shift+I registered for click-through toggle");
 
+                // 注册全局快捷键 Ctrl+Shift+N 切换便签面板
+                const HOTKEY_TOGGLE_NOTES: i32 = 2;
+                unsafe {
+                    let _ =
+                        RegisterHotKey(None, HOTKEY_TOGGLE_NOTES, MOD_CONTROL | MOD_SHIFT, 0x4E);
+                    // 0x4E = 'N'
+                }
+                info!("Hotkey Ctrl+Shift+N registered for notes panel toggle");
+
                 // Windows 消息循环
                 unsafe {
                     let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
@@ -955,6 +1158,11 @@ fn main() {
                             && msg.wParam.0 == HOTKEY_TOGGLE_THROUGH as usize
                         {
                             let _ = app_handle_clone.emit("toggle-click-through", ());
+                        }
+                        if msg.message == WM_HOTKEY
+                            && msg.wParam.0 == HOTKEY_TOGGLE_NOTES as usize
+                        {
+                            let _ = app_handle_clone.emit("toggle-notes-panel", ());
                         }
                         let _ = windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
                         windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
